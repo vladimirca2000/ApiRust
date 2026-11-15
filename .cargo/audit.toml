@@ -1,0 +1,36 @@
+# Configuração do cargo-audit (executado no CI).
+#
+# Cada exceção abaixo é temporária e deve ser reavaliada quando as dependências
+# de origem forem atualizadas. Não adicione IDs sem uma justificativa concreta.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2026-0459 — libsqlite3-sys 0.30.1 (transitiva via sqlx 0.8.6).
+  # A correção exige libsqlite3-sys >= 0.39.0, mas o sqlx 0.9.0 (última versão)
+  # ainda fixa a linha 0.37. O ataque exige que um terceiro local escreva um par
+  # de arquivos .db/-wal malicioso que a aplicação abra; no deploy, data/ deve
+  # ser gravável apenas pelo processo da API. Reavaliar a cada atualização do
+  # SQLx e migrar assim que houver versão com SQLite >= 3.54.0.
+  "RUSTSEC-2026-0459",
+
+  # RUSTSEC-2023-0071 — rsa 0.9.10 (Marvin attack).
+  # O crate aparece somente no Cargo.lock como dependência opcional do
+  # sqlx-mysql, que não é habilitado (o projeto usa apenas SQLite). Não entra no
+  # grafo compilado (`cargo tree -i rsa` não encontra dependentes). Remover a
+  # exceção quando o SQLx atualizar a linha do rsa.
+  "RUSTSEC-2023-0071",
+
+  # RUSTSEC-2026-0367, 0368, 0369, 0429 — zip 3.0.0 via utoipa-swagger-ui (build).
+  # A crate extrai o dist oficial do Swagger UI em compile-time; a API nunca
+  # chama ZipArchive::extract em arquivo enviado pelo cliente. Reavaliar ao
+  # atualizar utoipa-swagger-ui para uma linha que puxe zip >= 9.
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+  "RUSTSEC-2026-0429",
+
+  # RUSTSEC-2026-0387 — crypto-bigint 0.5.5 via jsonwebtoken → p256/p384.
+  # Tokens desta API usam apenas HS256; o código de curva elíptica não é
+  # exercido. Reavaliar quando jsonwebtoken atualizar a linha do bigint.
+  "RUSTSEC-2026-0387",
+]

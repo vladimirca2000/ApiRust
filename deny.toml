@@ -1,0 +1,65 @@
+# Política de dependências do workspace (cargo-deny).
+#
+# Rodada no CI junto de `cargo audit`. Exceções de advisory repetem as de
+# `.cargo/audit.toml` e devem ser reavaliadas a cada atualização do SQLx.
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # RUSTSEC-2026-0459 — libsqlite3-sys 0.30.1 (transitiva via sqlx 0.8.6).
+    # A correção exige SQLite >= 3.54.0; o sqlx 0.9 ainda não chegou lá. O
+    # ataque exige que um terceiro local escreva um par .db/-wal malicioso.
+    # Ver justificativa completa em `.cargo/audit.toml`.
+    "RUSTSEC-2026-0459",
+    # RUSTSEC-2023-0071 — rsa 0.9.10 (Marvin). Só aparece via sqlx-mysql, que
+    # o projeto não habilita. Ver `.cargo/audit.toml`.
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0367/0368/0369/0429 — zip 3.0.0, só como *build-dependency* do
+    # utoipa-swagger-ui (extração do dist da UI no compile). O binário da API
+    # não extrai ZIP de entrada do usuário. Reavaliar ao atualizar utoipa-swagger-ui.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+    # RUSTSEC-2026-0387 — crypto-bigint 0.5.5 via jsonwebtoken → p256/p384.
+    # A API assina JWT só com HS256; o código de curva elíptica não é chamado.
+    # jsonwebtoken 10 ainda puxa a linha 0.5. Reavaliar na próxima atualização.
+    "RUSTSEC-2026-0387",
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "OpenSSL",
+    "CC0-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+    "BSL-1.0",
+    "Unlicense",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# `workspace = true` nos crates internos parece wildcard; o path está fixo.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

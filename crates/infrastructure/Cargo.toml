@@ -1,0 +1,26 @@
+[package]
+name = "infrastructure"
+description = "Adaptadores de banco, Redis, JWT e hashing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+application = { workspace = true }
+argon2 = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+domain = { workspace = true }
+hex = "0.4"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+serde = { workspace = true, features = ["derive"] }
+sha2 = "0.10"
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = "1"
+
+[lints]
+workspace = true
