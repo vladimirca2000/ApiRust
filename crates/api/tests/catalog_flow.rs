@@ -4,6 +4,9 @@
 //! ordenação inválida, limite máximo de paginação e `409` ao excluir categoria
 //! com produtos.
 
+mod common;
+
+use common::isolated_database;
 use std::net::SocketAddr;
 
 use api::AppState;
@@ -14,7 +17,7 @@ use axum::http::{Request, StatusCode, header};
 use chrono::Utc;
 use domain::{Email, Role, User};
 use http_body_util::BodyExt;
-use infrastructure::{Argon2PasswordHasher, Database, SqlxUserRepository};
+use infrastructure::{Argon2PasswordHasher, SqlxUserRepository};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -37,10 +40,7 @@ struct Env {
 
 /// Monta o ambiente e autentica os três papéis.
 async fn env() -> Env {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    database.migrate().await.expect("migrations");
+    let database = isolated_database("teste").await;
 
     let repository = SqlxUserRepository::new(database.pool().clone());
     let hasher = Argon2PasswordHasher::new();
@@ -59,10 +59,10 @@ async fn env() -> Env {
             Utc::now(),
         )
         .expect("usuário");
-        repository.insert(&user).await.expect("inserir");
+        repository.insert(&user, None).await.expect("inserir");
     }
 
-    let state = AppState::new(false, database)
+    let state = AppState::for_tests(false, database)
         .with_jwt(SECRET, 900)
         .expect("jwt");
 
@@ -155,6 +155,8 @@ async fn create_category(env: &Env, name: &str) -> String {
     body["id"].as_str().expect("id").to_owned()
 }
 
+/// Verifica o contrato identificado por `admin_creates_and_lists_categories` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_creates_and_lists_categories() {
     let env = env().await;
@@ -175,6 +177,8 @@ async fn admin_creates_and_lists_categories() {
     assert_eq!(body["total"], 2);
 }
 
+/// Verifica o contrato identificado por `duplicate_category_name_returns_409` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn duplicate_category_name_returns_409() {
     let env = env().await;
@@ -192,6 +196,8 @@ async fn duplicate_category_name_returns_409() {
     assert_eq!(status, StatusCode::CONFLICT);
 }
 
+/// Verifica o contrato identificado por `plain_user_cannot_create_category` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn plain_user_cannot_create_category() {
     let env = env().await;
@@ -208,6 +214,8 @@ async fn plain_user_cannot_create_category() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// Verifica o contrato identificado por `plain_user_can_read_categories` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn plain_user_can_read_categories() {
     let env = env().await;
@@ -226,6 +234,8 @@ async fn plain_user_can_read_categories() {
     assert_eq!(body["total"], 1);
 }
 
+/// Verifica o contrato identificado por `deleting_category_with_products_returns_409` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn deleting_category_with_products_returns_409() {
     let env = env().await;
@@ -263,6 +273,8 @@ async fn deleting_category_with_products_returns_409() {
     );
 }
 
+/// Verifica o contrato identificado por `deleting_empty_category_returns_204` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn deleting_empty_category_returns_204() {
     let env = env().await;
@@ -280,6 +292,8 @@ async fn deleting_empty_category_returns_204() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
+/// Verifica o contrato identificado por `creating_product_with_invalid_price_returns_422` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn creating_product_with_invalid_price_returns_422() {
     let env = env().await;
@@ -309,6 +323,8 @@ async fn creating_product_with_invalid_price_returns_422() {
     }
 }
 
+/// Verifica o contrato identificado por `creating_product_with_negative_stock_returns_422` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn creating_product_with_negative_stock_returns_422() {
     let env = env().await;
@@ -332,6 +348,8 @@ async fn creating_product_with_negative_stock_returns_422() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// Verifica o contrato identificado por `creating_product_with_invalid_sku_returns_422` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn creating_product_with_invalid_sku_returns_422() {
     let env = env().await;
@@ -355,6 +373,8 @@ async fn creating_product_with_invalid_sku_returns_422() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// Verifica o contrato identificado por `creating_product_with_unknown_category_returns_404` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn creating_product_with_unknown_category_returns_404() {
     let env = env().await;
@@ -377,6 +397,8 @@ async fn creating_product_with_unknown_category_returns_404() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Verifica o contrato identificado por `duplicate_sku_returns_409` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn duplicate_sku_returns_409() {
     let env = env().await;
@@ -411,6 +433,8 @@ async fn duplicate_sku_returns_409() {
     assert_eq!(status, StatusCode::CONFLICT);
 }
 
+/// Verifica o contrato identificado por `invalid_sort_returns_400` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn invalid_sort_returns_400() {
     let env = env().await;
@@ -428,6 +452,8 @@ async fn invalid_sort_returns_400() {
     assert_eq!(body["title"], "invalid_request");
 }
 
+/// Verifica o contrato identificado por `every_allowlisted_sort_is_accepted` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn every_allowlisted_sort_is_accepted() {
     let env = env().await;
@@ -446,8 +472,10 @@ async fn every_allowlisted_sort_is_accepted() {
     }
 }
 
+/// Verifica o contrato identificado por `page_size_above_maximum_is_rejected` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
-async fn page_size_is_capped_at_maximum() {
+async fn page_size_above_maximum_is_rejected() {
     let env = env().await;
 
     let (status, body) = call(
@@ -459,13 +487,22 @@ async fn page_size_is_capped_at_maximum() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["limit"], 100,
-        "o limite deve ser truncado em 100, nunca obedecer 100000"
+    // Antes o valor era truncado para 100 silenciosamente. Agora é recusado: o
+    // cliente precisa saber que pediu algo fora do contrato, não receber uma
+    // página que ele não pediu e interpretar como completa.
+    assert_eq!(status, StatusCode::BAD_REQUEST, "corpo: {body}");
+    assert_eq!(body["title"], "invalid_request");
+    assert!(
+        body["detail"]
+            .as_str()
+            .unwrap_or("")
+            .contains("limit deve estar entre 1 e 100"),
+        "a mensagem deve apontar o intervalo aceito: {body}"
     );
 }
 
+/// Verifica o contrato identificado por `product_filters_by_category_and_name` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn product_filters_by_category_and_name() {
     let env = env().await;
@@ -515,6 +552,8 @@ async fn product_filters_by_category_and_name() {
     assert_eq!(body["total"], 1, "busca por nome é case-insensitive");
 }
 
+/// Verifica o contrato identificado por `product_price_is_returned_in_cents` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn product_price_is_returned_in_cents() {
     let env = env().await;
@@ -538,6 +577,8 @@ async fn product_price_is_returned_in_cents() {
     assert_eq!(body["price_cents"], 129990, "preço trafega em centavos");
 }
 
+/// Verifica o contrato identificado por `updating_product_stock_and_price_works` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn updating_product_stock_and_price_works() {
     let env = env().await;
@@ -573,6 +614,8 @@ async fn updating_product_stock_and_price_works() {
     assert_eq!(body["stock"], 0, "estoque zero é válido");
 }
 
+/// Verifica o contrato identificado por `deleting_product_removes_it_from_listing` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn deleting_product_removes_it_from_listing() {
     let env = env().await;
@@ -615,6 +658,8 @@ async fn deleting_product_removes_it_from_listing() {
     assert_eq!(body["total"], 0);
 }
 
+/// Verifica o contrato identificado por `plain_user_cannot_write_products` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn plain_user_cannot_write_products() {
     let env = env().await;
@@ -638,6 +683,8 @@ async fn plain_user_cannot_write_products() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// Verifica o contrato identificado por `catalog_requires_authentication` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn catalog_requires_authentication() {
     let env = env().await;

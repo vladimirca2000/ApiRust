@@ -1,3 +1,8 @@
+//! Regras de força da senha e representação protegida de hashes Argon2id.
+//!
+//! O domínio valida senhas de entrada e evita revelar hashes por formatação
+//! de depuração ou conversões implícitas.
+
 use std::fmt;
 
 use crate::error::DomainError;
@@ -73,6 +78,7 @@ pub fn validate_password(password: &str) -> Result<(), DomainError> {
 pub struct PasswordHash(String);
 
 impl fmt::Debug for PasswordHash {
+    /// Formata a representação protegida sem revelar o hash e retorna o resultado da escrita no formatter.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("PasswordHash(***)")
     }
@@ -118,12 +124,14 @@ impl PasswordHash {
 }
 
 impl fmt::Display for PasswordHash {
+    /// Formata a representação protegida sem revelar o hash e retorna o resultado da escrita no formatter.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
 impl AsRef<str> for PasswordHash {
+    /// Expõe a referência textual do hash para APIs que aceitam `AsRef<str>`.
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -138,14 +146,20 @@ fn invalid(reason: impl Into<String>) -> DomainError {
 mod tests {
     use super::*;
 
+    /// Senha de fixture que atende às regras de força do domínio.
     const STRONG_PASSWORD: &str = "Senha-Forte-2026!";
+    /// Hash Argon2id de fixture usado para validar a representação tipada.
     const VALID_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdGUtZGV0ZXN0ZQ$aGFzaC1kZS10ZXN0ZQ";
 
+    /// Verifica o contrato identificado por `accepts_strong_password` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_strong_password() {
         assert!(validate_password(STRONG_PASSWORD).is_ok());
     }
 
+    /// Verifica o contrato identificado por `rejects_short_password` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_short_password() {
         assert!(matches!(
@@ -154,6 +168,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `rejects_password_without_all_character_classes` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_password_without_all_character_classes() {
         for password in [
@@ -169,16 +185,22 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `rejects_control_characters` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_control_characters() {
         assert!(validate_password("Senha-Forte-2026!\u{7}").is_err());
     }
 
+    /// Verifica o contrato identificado por `accepts_password_with_spaces` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_password_with_spaces() {
         assert!(validate_password("Senha forte 2026!").is_ok());
     }
 
+    /// Verifica o contrato identificado por `parses_argon2id_hash` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn parses_argon2id_hash() {
         let hash = PasswordHash::parse(VALID_HASH).expect("hash válido");
@@ -186,6 +208,8 @@ mod tests {
         assert_eq!(hash.as_str(), VALID_HASH);
     }
 
+    /// Verifica o contrato identificado por `rejects_non_argon2id_hash` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_non_argon2id_hash() {
         assert!(PasswordHash::parse("texto-puro").is_err());
@@ -193,11 +217,15 @@ mod tests {
         assert!(PasswordHash::parse("$argon2id$v=19$m=1,t=1,p=1").is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_hash_with_whitespace` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_hash_with_whitespace() {
         assert!(PasswordHash::parse(format!("{VALID_HASH} extra")).is_err());
     }
 
+    /// Verifica o contrato identificado por `debug_does_not_leak_the_hash` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn debug_does_not_leak_the_hash() {
         let hash = PasswordHash::parse(VALID_HASH).expect("hash válido");

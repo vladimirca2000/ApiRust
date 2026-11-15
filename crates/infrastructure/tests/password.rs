@@ -6,6 +6,8 @@
 use application::PasswordHasher;
 use infrastructure::Argon2PasswordHasher;
 
+/// Verifica o contrato identificado por `hashes_with_argon2id_and_random_salt` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn hashes_with_argon2id_and_random_salt() {
     let hasher = Argon2PasswordHasher::new();
@@ -20,6 +22,8 @@ async fn hashes_with_argon2id_and_random_salt() {
     assert!(!first.as_str().contains(password));
 }
 
+/// Verifica o contrato identificado por `verifies_correct_password_and_rejects_wrong_one` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn verifies_correct_password_and_rejects_wrong_one() {
     let hasher = Argon2PasswordHasher::new();
@@ -39,6 +43,8 @@ async fn verifies_correct_password_and_rejects_wrong_one() {
     );
 }
 
+/// Verifica o contrato identificado por `fails_on_corrupted_hash` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn fails_on_corrupted_hash() {
     let hasher = Argon2PasswordHasher::new();

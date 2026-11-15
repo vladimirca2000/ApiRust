@@ -3,13 +3,15 @@
 //! Cobrem o último item da Fase 6: origens explícitas (nunca `*`), corpo
 //! limitado e headers de segurança presentes em toda resposta.
 
+mod common;
+
+use common::isolated_database;
 use std::net::SocketAddr;
 
 use api::AppState;
 use axum::body::Body;
 use axum::extract::connect_info::ConnectInfo;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
-use infrastructure::Database;
 use tower::ServiceExt;
 
 /// Segredo de teste válido.
@@ -17,12 +19,9 @@ const SECRET: &str = "0123456789abcdef0123456789abcdef";
 
 /// Monta o estado com as origens informadas.
 async fn state_with_origins(origins: Vec<String>) -> AppState {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    database.migrate().await.expect("migrations");
+    let database = isolated_database("teste").await;
 
-    AppState::new(false, database)
+    AppState::for_tests(false, database)
         .with_jwt(SECRET, 900)
         .expect("jwt")
         .with_allowed_origins(origins)
@@ -53,6 +52,8 @@ async fn get(state: &AppState, path: &str) -> axum::response::Response {
     .await
 }
 
+/// Verifica o contrato identificado por `security_headers_are_present_on_success` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn security_headers_are_present_on_success() {
     let state = state_with_origins(Vec::new()).await;
@@ -76,6 +77,8 @@ async fn security_headers_are_present_on_success() {
     assert!(headers.contains_key("permissions-policy"));
 }
 
+/// Verifica o contrato identificado por `security_headers_are_present_on_error` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn security_headers_are_present_on_error() {
     let state = state_with_origins(Vec::new()).await;
@@ -89,6 +92,8 @@ async fn security_headers_are_present_on_error() {
     );
 }
 
+/// Verifica o contrato identificado por `cors_denies_unknown_origin_by_default` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn cors_denies_unknown_origin_by_default() {
     let state = state_with_origins(Vec::new()).await;
@@ -112,6 +117,8 @@ async fn cors_denies_unknown_origin_by_default() {
     );
 }
 
+/// Verifica o contrato identificado por `cors_allows_a_configured_origin` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn cors_allows_a_configured_origin() {
     let state = state_with_origins(vec!["https://app.exemplo.com".to_owned()]).await;
@@ -135,6 +142,8 @@ async fn cors_allows_a_configured_origin() {
     );
 }
 
+/// Verifica o contrato identificado por `cors_does_not_allow_a_different_origin` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn cors_does_not_allow_a_different_origin() {
     let state = state_with_origins(vec!["https://app.exemplo.com".to_owned()]).await;
@@ -159,6 +168,8 @@ async fn cors_does_not_allow_a_different_origin() {
     );
 }
 
+/// Verifica o contrato identificado por `preflight_is_answered_for_allowed_origin` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn preflight_is_answered_for_allowed_origin() {
     let state = state_with_origins(vec!["https://app.exemplo.com".to_owned()]).await;
@@ -191,6 +202,8 @@ async fn preflight_is_answered_for_allowed_origin() {
     );
 }
 
+/// Verifica o contrato identificado por `body_over_the_limit_is_rejected` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn body_over_the_limit_is_rejected() {
     let state = state_with_origins(Vec::new()).await;
@@ -216,6 +229,8 @@ async fn body_over_the_limit_is_rejected() {
     );
 }
 
+/// Verifica o contrato identificado por `excess_concurrent_requests_return_503` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn excess_concurrent_requests_return_503() {
     /// Handler que segura a conexão o suficiente para a segunda requisição
@@ -265,6 +280,8 @@ async fn excess_concurrent_requests_return_503() {
     assert_eq!(first.await.expect("join"), StatusCode::OK);
 }
 
+/// Verifica o contrato identificado por `body_within_the_limit_reaches_the_handler` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn body_within_the_limit_reaches_the_handler() {
     let state = state_with_origins(Vec::new()).await;

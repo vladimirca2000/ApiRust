@@ -1,3 +1,7 @@
+//! Configuração do `tracing` para logs legíveis em desenvolvimento e JSON em produção.
+//!
+//! O filtro de níveis é obtido de `RUST_LOG`, com defaults seguros para a API.
+
 use anyhow::Result;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;

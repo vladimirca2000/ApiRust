@@ -18,13 +18,17 @@ use axum::{Json, Router};
 use chrono::Utc;
 use domain::Email;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use utoipa::ToSchema;
 
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::problem::{ProblemDetails, resolve_actor, to_app_error, to_problem};
-use crate::rate_limit::RateLimitPolicy;
+
+/// Tempo informado ao cliente quando o contador de rate limit está fora do ar.
+///
+/// É o mesmo pior caso da janela de login: sem contador, a resposta é "tente
+/// mais tarde" com o prazo de uma janela cheia.
+const RATE_LIMIT_UNAVAILABLE_RETRY_SECS: u64 = 60;
 
 /// Corpo de `POST /auth/login`.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -98,6 +102,7 @@ pub fn routes() -> Router<AppState> {
         (status = 429, description = "Rate limit excedido", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `login`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn login_doc() {}
 
@@ -113,6 +118,7 @@ pub fn login_doc() {}
         (status = 429, description = "Rate limit excedido", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `refresh`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn refresh_doc() {}
 
@@ -127,6 +133,7 @@ pub fn refresh_doc() {}
         (status = 500, description = "Falha interna", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `logout`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn logout_doc() {}
 
@@ -142,6 +149,7 @@ pub fn logout_doc() {}
         (status = 403, description = "Usuário inativo", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `me`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn me_doc() {}
 
@@ -164,20 +172,40 @@ fn too_many_requests(retry_after: std::time::Duration) -> Response {
 /// Autentica e devolve um par de tokens.
 ///
 /// Aplica rate limit por IP antes de tocar no banco, de modo que tentativas
-/// repetidas nem cheguem ao Argon2 (que é caro de propósito).
+/// repetidas nem cheguem ao Argon2 (que é caro de propósito). O contador vem da
+/// porta `RateLimitStore`, que é Redis em produção e memória em
+/// desenvolvimento.
 async fn login(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<TokenResponse>, Response> {
-    let policy = RateLimitPolicy::login();
-    let now = Instant::now();
-    let key = format!("login:{}", peer.ip());
+    let policy = crate::rate_limit::login_policy();
+    let client_ip = crate::client_ip::resolve_client_ip(
+        peer.ip(),
+        &state.trusted_proxies,
+        headers
+            .get(crate::client_ip::FORWARDED_FOR_HEADER)
+            .and_then(|value| value.to_str().ok()),
+    );
+    let key = format!("login:{client_ip}");
 
-    if let Err(retry_after) = state.rate_limiter.check(&key, policy, now) {
-        return Err(too_many_requests(retry_after));
+    match state.rate_limiter.hit(&key, policy).await {
+        Ok(decision) => {
+            if let Err(retry_after) = decision.into_result() {
+                return Err(too_many_requests(retry_after));
+            }
+        }
+        // Falha fechada: sem conseguir contar tentativas, não dá para garantir
+        // que a força bruta está contida — melhor recusar do que liberar.
+        Err(error) => {
+            tracing::error!(%error, "rate limit indisponível; recusando login");
+            return Err(too_many_requests(std::time::Duration::from_secs(
+                RATE_LIMIT_UNAVAILABLE_RETRY_SECS,
+            )));
+        }
     }
-    state.rate_limiter.prune(policy, now);
 
     let email = Email::parse(&body.email)
         .map_err(|_| to_app_error(&application::AppError::Authentication))?;
@@ -186,7 +214,10 @@ async fn login(
         .authenticate()
         .login(&email, &body.password, Utc::now())
         .await
-        .map_err(|error| to_app_error(&error))?;
+        .map_err(|error| {
+            eprintln!("DEBUG_LOGIN: {error:?}");
+            to_app_error(&error)
+        })?;
 
     Ok(Json(TokenResponse {
         access_token: pair.access_token,
@@ -200,14 +231,31 @@ async fn login(
 async fn refresh(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<RefreshRequest>,
 ) -> Result<Json<TokenResponse>, Response> {
-    let policy = RateLimitPolicy::refresh();
-    let now = Instant::now();
-    let key = format!("refresh:{}", peer.ip());
+    let policy = crate::rate_limit::refresh_policy();
+    let client_ip = crate::client_ip::resolve_client_ip(
+        peer.ip(),
+        &state.trusted_proxies,
+        headers
+            .get(crate::client_ip::FORWARDED_FOR_HEADER)
+            .and_then(|value| value.to_str().ok()),
+    );
+    let key = format!("refresh:{client_ip}");
 
-    if let Err(retry_after) = state.rate_limiter.check(&key, policy, now) {
-        return Err(too_many_requests(retry_after));
+    match state.rate_limiter.hit(&key, policy).await {
+        Ok(decision) => {
+            if let Err(retry_after) = decision.into_result() {
+                return Err(too_many_requests(retry_after));
+            }
+        }
+        Err(error) => {
+            tracing::error!(%error, "rate limit indisponível; recusando refresh");
+            return Err(too_many_requests(std::time::Duration::from_secs(
+                RATE_LIMIT_UNAVAILABLE_RETRY_SECS,
+            )));
+        }
     }
 
     let secret = domain::RefreshTokenSecret::new(body.refresh_token);
@@ -233,9 +281,19 @@ async fn refresh(
     }
 }
 
-/// Revoga o refresh token apresentado.
+/// Revoga o refresh token apresentado e o access token corrente.
+///
+/// O refresh token é revogado no armazenamento; o access token, que é
+/// stateless, entra na denylist pelo `jti` até o seu `exp`. Sem esse segundo
+/// passo, o logout só encerraria a renovação e o token continuaria aceito até
+/// expirar — a diferença entre "saí da conta" e "saí da conta de verdade".
+///
+/// A rota aceita a requisição com ou sem `Authorization`: sem ele, apenas o
+/// refresh é revogado, comportamento idempotente para clientes que só guardam
+/// o refresh.
 async fn logout(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<LogoutRequest>,
 ) -> Result<StatusCode, Response> {
     let secret = domain::RefreshTokenSecret::new(body.refresh_token);
@@ -246,6 +304,27 @@ async fn logout(
         .logout(&hash, Utc::now())
         .await
         .map_err(|error| to_app_error(&error))?;
+
+    // Access token presente: revoga o `jti` até o `exp` original.
+    if let Some(header) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    {
+        let token = header
+            .strip_prefix("Bearer ")
+            .or_else(|| header.strip_prefix("bearer "))
+            .map(str::trim);
+
+        if let Some(token) = token {
+            if let Ok(claims) = state.tokens.verify_access(token).await {
+                state
+                    .denylist
+                    .revoke(&claims.token_id, claims.expires_at as i64)
+                    .await
+                    .map_err(|error| to_app_error(&error))?;
+            }
+        }
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

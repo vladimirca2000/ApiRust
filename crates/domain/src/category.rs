@@ -277,6 +277,8 @@ mod tests {
             .with_timezone(&Utc)
     }
 
+    /// Verifica o contrato identificado por `new_category_is_active_and_trimmed` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn new_category_is_active_and_trimmed() {
         let category = Category::new("  Eletrônicos  ", None, now()).expect("válida");
@@ -286,6 +288,8 @@ mod tests {
         assert_eq!(category.created_at(), now());
     }
 
+    /// Verifica o contrato identificado por `blank_description_becomes_none` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn blank_description_becomes_none() {
         let category = Category::new("X", Some("   ".to_owned()), now()).expect("válida");
@@ -293,6 +297,8 @@ mod tests {
         assert_eq!(category.description(), None);
     }
 
+    /// Verifica o contrato identificado por `rejects_empty_name` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_empty_name() {
         assert!(matches!(
@@ -301,18 +307,24 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `rejects_name_over_limit` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_name_over_limit() {
         let long = "a".repeat(MAX_CATEGORY_NAME_LEN + 1);
         assert!(Category::new(long, None, now()).is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_description_over_limit` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_description_over_limit() {
         let long = "a".repeat(MAX_DESCRIPTION_LEN + 1);
         assert!(Category::new("X", Some(long), now()).is_err());
     }
 
+    /// Verifica o contrato identificado por `rename_updates_timestamp` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rename_updates_timestamp() {
         let mut category = Category::new("Antiga", None, now()).expect("válida");
@@ -324,6 +336,8 @@ mod tests {
         assert_eq!(category.updated_at(), later);
     }
 
+    /// Verifica o contrato identificado por `timestamp_never_moves_backwards` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn timestamp_never_moves_backwards() {
         let mut category = Category::new("X", None, now()).expect("válida");
@@ -335,6 +349,8 @@ mod tests {
         assert_eq!(category.updated_at(), now());
     }
 
+    /// Verifica o contrato identificado por `soft_delete_is_idempotent` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn soft_delete_is_idempotent() {
         let mut category = Category::new("X", None, now()).expect("válida");
@@ -347,6 +363,8 @@ mod tests {
         assert_eq!(category.deleted_at(), Some(later));
     }
 
+    /// Verifica o contrato identificado por `mutations_rejected_after_delete` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn mutations_rejected_after_delete() {
         let mut category = Category::new("X", None, now()).expect("válida");

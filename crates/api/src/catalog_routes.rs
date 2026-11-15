@@ -41,6 +41,7 @@ use application::{
         (status = 401, description = "Não autenticado", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `list categories`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn list_categories_doc() {}
 
@@ -59,6 +60,7 @@ pub fn list_categories_doc() {}
         (status = 422, description = "Dados inválidos", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `create category`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn create_category_doc() {}
 
@@ -75,6 +77,7 @@ pub fn create_category_doc() {}
         (status = 404, description = "Não encontrada", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `get category`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn get_category_doc() {}
 
@@ -94,6 +97,7 @@ pub fn get_category_doc() {}
         (status = 409, description = "Nome já em uso", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `update category`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn update_category_doc() {}
 
@@ -112,6 +116,7 @@ pub fn update_category_doc() {}
         (status = 409, description = "Categoria possui produtos vinculados", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `delete category`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn delete_category_doc() {}
 
@@ -135,6 +140,7 @@ pub fn delete_category_doc() {}
         (status = 401, description = "Não autenticado", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `list products`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn list_products_doc() {}
 
@@ -154,6 +160,7 @@ pub fn list_products_doc() {}
         (status = 422, description = "Preço, estoque ou SKU inválido", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `create product`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn create_product_doc() {}
 
@@ -170,6 +177,7 @@ pub fn create_product_doc() {}
         (status = 404, description = "Não encontrado", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `get product`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn get_product_doc() {}
 
@@ -190,6 +198,7 @@ pub fn get_product_doc() {}
         (status = 422, description = "Dados inválidos", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `update product`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn update_product_doc() {}
 
@@ -207,6 +216,7 @@ pub fn update_product_doc() {}
         (status = 404, description = "Não encontrado", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `delete product`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn delete_product_doc() {}
 
@@ -250,6 +260,7 @@ pub struct CategoryResponse {
 }
 
 impl From<Category> for CategoryResponse {
+    /// Converte uma entidade de domínio em DTO HTTP, preservando os campos públicos e os formatos da API; retorna a resposta serializável.
     fn from(category: Category) -> Self {
         Self {
             id: category.id().to_string(),
@@ -291,6 +302,7 @@ pub struct ProductResponse {
 }
 
 impl From<Product> for ProductResponse {
+    /// Converte uma entidade de domínio em DTO HTTP, preservando os campos públicos e os formatos da API; retorna a resposta serializável.
     fn from(product: Product) -> Self {
         Self {
             id: product.id().to_string(),
@@ -433,7 +445,8 @@ async fn list_categories(
     resolve_actor(&state, &claims.subject).await?;
     let Query(query) = query.map_err(|_| invalid_query())?;
 
-    let use_case = ManageCategories::new(state.categories.as_ref());
+    let use_case =
+        ManageCategories::new(state.categories.as_ref()).with_audit(state.audit.as_ref());
     let page = use_case
         .list(
             query.offset.unwrap_or(0),
@@ -460,7 +473,8 @@ async fn get_category(
     let Path(id) = path.map_err(|_| invalid_path())?;
     let id = parse_id(&id, true)?;
 
-    let use_case = ManageCategories::new(state.categories.as_ref());
+    let use_case =
+        ManageCategories::new(state.categories.as_ref()).with_audit(state.audit.as_ref());
     let category = use_case
         .view(id)
         .await
@@ -478,7 +492,8 @@ async fn create_category(
     let actor = resolve_actor(&state, &claims.subject).await?;
     let Json(body) = body.map_err(|_| invalid_body())?;
 
-    let use_case = ManageCategories::new(state.categories.as_ref());
+    let use_case =
+        ManageCategories::new(state.categories.as_ref()).with_audit(state.audit.as_ref());
     let category = use_case
         .create(
             actor,
@@ -506,7 +521,8 @@ async fn update_category(
     let Json(body) = body.map_err(|_| invalid_body())?;
     let id = parse_id(&id, true)?;
 
-    let use_case = ManageCategories::new(state.categories.as_ref());
+    let use_case =
+        ManageCategories::new(state.categories.as_ref()).with_audit(state.audit.as_ref());
     let category = use_case
         .update(
             actor,
@@ -533,7 +549,8 @@ async fn delete_category(
     let Path(id) = path.map_err(|_| invalid_path())?;
     let id = parse_id(&id, true)?;
 
-    let use_case = ManageCategories::new(state.categories.as_ref());
+    let use_case =
+        ManageCategories::new(state.categories.as_ref()).with_audit(state.audit.as_ref());
     use_case
         .delete(actor, id, Utc::now())
         .await
@@ -565,7 +582,12 @@ async fn list_products(
         only_active: query.only_active,
     };
 
-    let use_case = ManageProducts::new(state.products.as_ref(), state.categories.as_ref());
+    let use_case = ManageProducts::new(
+        state.products.as_ref(),
+        state.categories.as_ref(),
+        state.history.as_ref(),
+    )
+    .with_audit(state.audit.as_ref());
     let page = use_case
         .list(
             filter,
@@ -595,7 +617,12 @@ async fn get_product(
     let Path(id) = path.map_err(|_| invalid_path())?;
     let id = parse_id(&id, false)?;
 
-    let use_case = ManageProducts::new(state.products.as_ref(), state.categories.as_ref());
+    let use_case = ManageProducts::new(
+        state.products.as_ref(),
+        state.categories.as_ref(),
+        state.history.as_ref(),
+    )
+    .with_audit(state.audit.as_ref());
     let product = use_case
         .view(id)
         .await
@@ -614,7 +641,12 @@ async fn create_product(
     let Json(body) = body.map_err(|_| invalid_body())?;
     let category_id = parse_id(&body.category_id, true)?;
 
-    let use_case = ManageProducts::new(state.products.as_ref(), state.categories.as_ref());
+    let use_case = ManageProducts::new(
+        state.products.as_ref(),
+        state.categories.as_ref(),
+        state.history.as_ref(),
+    )
+    .with_audit(state.audit.as_ref());
     let product = use_case
         .create(
             actor,
@@ -651,7 +683,12 @@ async fn update_product(
         None => None,
     };
 
-    let use_case = ManageProducts::new(state.products.as_ref(), state.categories.as_ref());
+    let use_case = ManageProducts::new(
+        state.products.as_ref(),
+        state.categories.as_ref(),
+        state.history.as_ref(),
+    )
+    .with_audit(state.audit.as_ref());
     let product = use_case
         .update(
             actor,
@@ -681,7 +718,12 @@ async fn delete_product(
     let Path(id) = path.map_err(|_| invalid_path())?;
     let id = parse_id(&id, false)?;
 
-    let use_case = ManageProducts::new(state.products.as_ref(), state.categories.as_ref());
+    let use_case = ManageProducts::new(
+        state.products.as_ref(),
+        state.categories.as_ref(),
+        state.history.as_ref(),
+    )
+    .with_audit(state.audit.as_ref());
     use_case
         .delete(actor, id, Utc::now())
         .await

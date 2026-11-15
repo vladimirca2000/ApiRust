@@ -5,6 +5,9 @@
 //! cobrem os dois lados — presentes em dev, ausentes (`404`) em produção — e o
 //! boot que rejeita a combinação insegura.
 
+mod common;
+
+use common::isolated_database;
 use std::net::SocketAddr;
 
 use api::AppState;
@@ -12,7 +15,6 @@ use api::config::AppConfig;
 use axum::body::Body;
 use axum::extract::connect_info::ConnectInfo;
 use axum::http::{Request, StatusCode};
-use infrastructure::Database;
 use tower::ServiceExt;
 
 /// Segredo de teste válido para o JWT.
@@ -23,12 +25,9 @@ const DOC_PATHS: [&str; 2] = ["/swagger-ui", "/api-docs/openapi.json"];
 
 /// Estado com banco em memória, controlando a exposição da documentação.
 async fn state(expose_api_docs: bool) -> AppState {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    database.migrate().await.expect("migrations");
+    let database = isolated_database("teste").await;
 
-    AppState::new(false, database)
+    AppState::for_tests(false, database)
         .with_jwt(SECRET, 900)
         .expect("jwt")
         .with_api_docs(expose_api_docs)
@@ -51,6 +50,8 @@ async fn get(state: &AppState, path: &str) -> StatusCode {
         .status()
 }
 
+/// Verifica o contrato identificado por `documentation_is_served_in_development` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn documentation_is_served_in_development() {
     let app = state(true).await;
@@ -70,6 +71,8 @@ async fn documentation_is_served_in_development() {
     );
 }
 
+/// Verifica o contrato identificado por `documentation_returns_404_in_production` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn documentation_returns_404_in_production() {
     let app = state(false).await;
@@ -84,6 +87,8 @@ async fn documentation_returns_404_in_production() {
     }
 }
 
+/// Verifica o contrato identificado por `documentation_returns_404_not_403` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn documentation_returns_404_not_403() {
     let app = state(false).await;
@@ -98,6 +103,8 @@ async fn documentation_returns_404_not_403() {
     }
 }
 
+/// Verifica o contrato identificado por `other_alternative_consoles_do_not_exist` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn other_alternative_consoles_do_not_exist() {
     let app = state(true).await;
@@ -169,7 +176,7 @@ fn production_rejects_enabling_api_docs() {
     let base = |env: &str, expose: Option<&str>| -> Result<AppConfig, String> {
         let mut pairs = vec![
             ("APP_ENV", env),
-            ("DATABASE_URL", "sqlite://:memory:"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", SECRET),
         ];
         if let Some(value) = expose {

@@ -4,6 +4,9 @@
 //! mais os casos de falha (senha inválida, token inválido, usuário inativo,
 //! refresh reutilizado e rate limit).
 
+mod common;
+
+use common::isolated_database;
 use std::net::SocketAddr;
 
 use api::AppState;
@@ -14,7 +17,7 @@ use axum::http::{Request, StatusCode, header};
 use chrono::Utc;
 use domain::{Email, Role, User};
 use http_body_util::BodyExt;
-use infrastructure::{Argon2PasswordHasher, Database, SqlxUserRepository};
+use infrastructure::{Argon2PasswordHasher, SqlxUserRepository};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -29,10 +32,7 @@ const TTL_SECS: u64 = 900;
 
 /// Banco em memória migrado, com um usuário ativo já criado.
 async fn state_with_user() -> AppState {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    database.migrate().await.expect("migrations");
+    let database = isolated_database("teste").await;
 
     let repository = SqlxUserRepository::new(database.pool().clone());
     let hasher = Argon2PasswordHasher::new();
@@ -47,9 +47,12 @@ async fn state_with_user() -> AppState {
     )
     .expect("usuário válido");
 
-    repository.insert(&user).await.expect("inserir usuário");
+    repository
+        .insert(&user, None)
+        .await
+        .expect("inserir usuário");
 
-    AppState::new(false, database)
+    AppState::for_tests(false, database)
         .with_jwt(SECRET, TTL_SECS)
         .expect("configurar JWT")
 }
@@ -105,6 +108,8 @@ async fn send(
     (status, json, content_type)
 }
 
+/// Verifica o contrato identificado por `full_flow_login_access_refresh_logout` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn full_flow_login_access_refresh_logout() {
     let state = state_with_user().await;
@@ -176,9 +181,11 @@ async fn full_flow_login_access_refresh_logout() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "body={body}");
 }
 
+/// Verifica o contrato identificado por `login_with_wrong_password_returns_401_problem_json` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn login_with_wrong_password_returns_401_problem_json() {
     let state = state_with_user().await;
@@ -206,6 +213,8 @@ async fn login_with_wrong_password_returns_401_problem_json() {
     );
 }
 
+/// Verifica o contrato identificado por `login_with_invalid_email_format_returns_401` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn login_with_invalid_email_format_returns_401() {
     let state = state_with_user().await;
@@ -223,6 +232,8 @@ async fn login_with_invalid_email_format_returns_401() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// Verifica o contrato identificado por `me_without_token_returns_401` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn me_without_token_returns_401() {
     let state = state_with_user().await;
@@ -234,6 +245,8 @@ async fn me_without_token_returns_401() {
     assert_eq!(body["status"], 401);
 }
 
+/// Verifica o contrato identificado por `me_with_invalid_token_returns_401` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn me_with_invalid_token_returns_401() {
     let state = state_with_user().await;
@@ -250,6 +263,8 @@ async fn me_with_invalid_token_returns_401() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// Verifica o contrato identificado por `me_with_token_of_deactivated_user_returns_403` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn me_with_token_of_deactivated_user_returns_403() {
     let state = state_with_user().await;
@@ -279,6 +294,8 @@ async fn me_with_token_of_deactivated_user_returns_403() {
     );
 }
 
+/// Verifica o contrato identificado por `reusing_a_refresh_token_invalidates_the_session` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn reusing_a_refresh_token_invalidates_the_session() {
     let state = state_with_user().await;
@@ -331,6 +348,8 @@ async fn reusing_a_refresh_token_invalidates_the_session() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// Verifica o contrato identificado por `login_is_rate_limited_per_ip` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn login_is_rate_limited_per_ip() {
     let state = state_with_user().await;
@@ -356,6 +375,8 @@ async fn login_is_rate_limited_per_ip() {
     );
 }
 
+/// Verifica o contrato identificado por `refresh_does_not_accept_an_access_token` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn refresh_does_not_accept_an_access_token() {
     let state = state_with_user().await;
@@ -383,6 +404,8 @@ async fn refresh_does_not_accept_an_access_token() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// Verifica o contrato identificado por `tokens_are_never_logged` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn tokens_are_never_logged() {
     let state = state_with_user().await;

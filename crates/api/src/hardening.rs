@@ -156,6 +156,8 @@ fn _state_marker(_: &AppState) {}
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `security_headers_are_all_lowercase` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn security_headers_are_all_lowercase() {
         // Cabeçalhos HTTP são case-insensitive, mas manter minúsculas evita
@@ -165,6 +167,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `security_headers_forbid_embedding_and_sniffing` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn security_headers_forbid_embedding_and_sniffing() {
         let map: std::collections::HashMap<_, _> = SECURITY_HEADERS.iter().copied().collect();
@@ -174,6 +178,8 @@ mod tests {
         assert_eq!(map.get("cache-control"), Some(&"no-store"));
     }
 
+    /// Verifica o contrato identificado por `cors_without_origins_does_not_wildcard` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn cors_without_origins_does_not_wildcard() {
         // A camada sem origens configuradas não deve aceitar qualquer origem;
@@ -182,6 +188,8 @@ mod tests {
         let _ = layer;
     }
 
+    /// Verifica o contrato identificado por `body_limit_is_reasonable` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn body_limit_is_reasonable() {
         assert_eq!(MAX_BODY_BYTES, 1024 * 1024);

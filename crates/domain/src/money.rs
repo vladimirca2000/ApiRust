@@ -59,12 +59,16 @@ impl fmt::Display for Money {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `accepts_positive_values` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_positive_values() {
         assert_eq!(Money::from_cents(1).expect("válido").cents(), 1);
         assert_eq!(Money::from_cents(9_999).expect("válido").cents(), 9_999);
     }
 
+    /// Verifica o contrato identificado por `rejects_zero_and_negative` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_zero_and_negative() {
         assert!(matches!(
@@ -77,6 +81,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `formats_with_brazilian_decimal_separator` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn formats_with_brazilian_decimal_separator() {
         assert_eq!(
@@ -87,6 +93,8 @@ mod tests {
         assert_eq!(Money::from_cents(100).expect("válido").to_string(), "1,00");
     }
 
+    /// Verifica o contrato identificado por `orders_by_numeric_value` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn orders_by_numeric_value() {
         let cheap = Money::from_cents(100).expect("válido");

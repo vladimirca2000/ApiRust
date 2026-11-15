@@ -64,6 +64,7 @@ impl Sku {
 }
 
 impl fmt::Display for Sku {
+    /// Formata o SKU normalizado e retorna o resultado da escrita no formatter.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
@@ -78,6 +79,8 @@ fn invalid(reason: impl Into<String>) -> DomainError {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `normalizes_case_and_whitespace` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn normalizes_case_and_whitespace() {
         let sku = Sku::parse("  abc-123  ").expect("sku válido");
@@ -85,6 +88,8 @@ mod tests {
         assert_eq!(sku.as_str(), "ABC-123");
     }
 
+    /// Verifica o contrato identificado por `accepts_common_separators` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_common_separators() {
         for value in ["ABC-123", "SKU_1", "PROD.001", "X1Y2Z3"] {
@@ -92,17 +97,23 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `rejects_too_short` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_too_short() {
         assert!(matches!(Sku::parse("AB"), Err(DomainError::InvalidSku(_))));
     }
 
+    /// Verifica o contrato identificado por `rejects_too_long` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_too_long() {
         let long = "A".repeat(MAX_SKU_LEN + 1);
         assert!(matches!(Sku::parse(long), Err(DomainError::InvalidSku(_))));
     }
 
+    /// Verifica o contrato identificado por `rejects_invalid_characters` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_invalid_characters() {
         for value in ["ABC 123", "ABC/123", "ABC#123", "AÇA-1"] {
@@ -110,6 +121,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `case_insensitive_equality_after_normalization` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn case_insensitive_equality_after_normalization() {
         let lower = Sku::parse("sku-1").expect("válido");

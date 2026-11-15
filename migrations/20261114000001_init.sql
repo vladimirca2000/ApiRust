@@ -1,5 +1,8 @@
 -- Schema inicial da API: usuários, categorias, produtos e refresh tokens.
 -- Datas em UTC, formato ISO-8601 (TEXT). Soft delete via deleted_at.
+-- Valores monetários e saldo usam BIGINT (INT8): o domínio trabalha com
+-- `i64` e `INTEGER` no PostgreSQL é `INT4`, o que faria a decodificação
+-- falhar com "mismatched types" na leitura.
 
 CREATE TABLE users (
     id            TEXT PRIMARY KEY NOT NULL,
@@ -37,8 +40,8 @@ CREATE TABLE products (
     name        TEXT NOT NULL CHECK (length(trim(name)) > 0),
     sku         TEXT NOT NULL CHECK (length(trim(sku)) > 0),
     description TEXT,
-    price_cents INTEGER NOT NULL CHECK (price_cents > 0),
-    stock       INTEGER NOT NULL CHECK (stock >= 0),
+    price_cents BIGINT NOT NULL CHECK (price_cents > 0),
+    stock       BIGINT NOT NULL CHECK (stock >= 0),
     category_id TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     created_at  TEXT NOT NULL,

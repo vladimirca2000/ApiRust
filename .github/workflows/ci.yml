@@ -13,6 +13,45 @@ jobs:
   quality:
     name: Formatação, Clippy e testes
     runs-on: ubuntu-latest
+
+    # PostgreSQL e Redis como serviços: sem eles, as suítes de integração
+    # entram em panic (os helpers exigem `TEST_DATABASE_URL`) ou pulam sem
+    # exercitar a integração. Um teste que passa por ausência de dependência não
+    # é verificação — é ruído verde.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: apirust
+          POSTGRES_PASSWORD: apirust_ci
+          POSTGRES_DB: apirust_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apirust -d apirust_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        # Sem senha neste job: o runner é efêmero e o serviço só é publicado em
+        # `localhost`. A autenticação é exercitada nos testes de integração, que
+        # usam `REDIS_URL` — quando ela carrega credencial, o `AUTH` é testado.
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    env:
+      # O passo de testes usa estas URLs. `TEST_DATABASE_URL` aponta para o
+      # serviço acima; cada teste cria um schema próprio e o descarta.
+      TEST_DATABASE_URL: postgres://apirust:apirust_ci@localhost:5432/apirust_ci
+      REDIS_URL: redis://localhost:6379
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,10 +72,90 @@ jobs:
       - name: Testes
         run: cargo test --workspace
 
+      # Prova de que as suítes de integração rodaram de fato: se o banco não
+      # estivesse acessível, os testes Redis imprimiriam `SKIP` e os de banco
+      # falhariam — este passo transforma o skip em erro explícito.
+      - name: Confirmar que a integração com Redis não foi pulada
+        run: |
+          output=$(cargo test -p infrastructure --test redis -- --nocapture 2>&1)
+          echo "$output"
+          if echo "$output" | grep -q "SKIP:"; then
+            echo "::error::testes de integração Redis foram pulados neste run"
+            exit 1
+          fi
+
       - name: Documentação
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  coverage:
+    name: Cobertura (informativa)
+    runs-on: ubuntu-latest
+
+    # Sem limiar que quebre o build: o objetivo é tornar a tendência visível,
+    # não transformar cobertura em meta. Um piso numérico mal calibrado leva a
+    # testes de fachada, que cobrem linha sem afirmar comportamento.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: apirust
+          POSTGRES_PASSWORD: apirust_ci
+          POSTGRES_DB: apirust_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apirust -d apirust_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    env:
+      TEST_DATABASE_URL: postgres://apirust:apirust_ci@localhost:5432/apirust_ci
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Instalar cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Cache de build
+        uses: Swatinem/rust-cache@v2
+
+      # `--no-fail-under-coverage` mantém o job verde: a saída serve de
+      # referência para revisão, não de portão.
+      - name: Coletar cobertura
+        run: |
+          cargo llvm-cov --workspace --no-fail-under-coverage \
+            --summary-only | tee cobertura.txt
+
+      - name: Publicar resumo
+        run: |
+          {
+            echo "## Cobertura de testes"
+            echo '```'
+            cat cobertura.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   audit:
     name: Auditoria de dependências

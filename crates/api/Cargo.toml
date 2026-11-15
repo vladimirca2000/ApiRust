@@ -11,11 +11,13 @@ publish.workspace = true
 anyhow = { workspace = true }
 application = { workspace = true }
 async-stream = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 domain = { workspace = true }
 dotenvy = { workspace = true }
 infrastructure = { workspace = true }
+prometheus = { workspace = true }
 serde = { workspace = true }
 serde_json.workspace = true
 thiserror = { workspace = true }
@@ -30,7 +32,7 @@ uuid = "1"
 [dev-dependencies]
 http-body-util = "0.1"
 serde_json = { workspace = true }
-sqlx = { workspace = true, default-features = false, features = ["runtime-tokio", "sqlite"] }
+sqlx = { workspace = true, default-features = false, features = ["runtime-tokio", "postgres"] }
 tower = { workspace = true }
 
 [lints]

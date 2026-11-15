@@ -1,3 +1,8 @@
+//! Leitura e validação tipada da configuração obtida do ambiente.
+//!
+//! Centraliza defaults, limites operacionais e regras que fazem o processo
+//! falhar cedo quando há valores ausentes ou combinações inseguras.
+
 use std::fmt;
 use std::net::IpAddr;
 
@@ -69,6 +74,7 @@ impl JwtSecret {
 }
 
 impl fmt::Debug for JwtSecret {
+    /// Formata o erro de configuração para diagnóstico sem expor segredos; escreve no formatter e retorna o resultado da formatação.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("JwtSecret(***)")
     }
@@ -103,6 +109,7 @@ impl AdminSeed {
 }
 
 impl fmt::Debug for AdminSeed {
+    /// Formata o erro de configuração para diagnóstico sem expor segredos; escreve no formatter e retorna o resultado da formatação.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("AdminSeed { email: <oculto>, password: <oculto> }")
     }
@@ -121,8 +128,14 @@ pub struct AppConfig {
     pub host: IpAddr,
     /// Porta TCP em que o servidor escuta.
     pub port: u16,
-    /// URL SQLx do banco (caminho do arquivo SQLite).
+    /// URL de conexão do PostgreSQL (`postgres://usuario:senha@host:porta/banco`).
     pub database_url: String,
+    /// Schema do PostgreSQL usado pela aplicação.
+    ///
+    /// Quando `None`, o pool usa o `search_path` padrão do usuário (normalmente
+    /// `public`). Em desenvolvimento compartilhado, definir `DATABASE_SCHEMA`
+    /// isola as tabelas da API das de outras aplicações do mesmo banco.
+    pub database_schema: Option<String>,
     /// Se `true`, aplica as migrations embutidas durante o boot.
     pub run_migrations: bool,
     /// URL do Redis, quando configurado (uso efetivo a partir da Fase 3).
@@ -151,6 +164,15 @@ pub struct AppConfig {
     pub max_concurrent_requests: usize,
     /// Segundos de espera das conexões em voo após o sinal de shutdown.
     pub shutdown_drain_secs: u64,
+    /// Token exigido por `/metrics`; `None` mantém a rota desabilitada.
+    pub metrics_token: Option<String>,
+    /// IPs de proxy confiáveis, lidos de `TRUSTED_PROXIES`.
+    ///
+    /// Vazio (padrão) significa "a API é exposta direto": o IP do cliente é o
+    /// peer do TCP e `X-Forwarded-For` é ignorado. Atrás de reverse proxy, liste
+    /// os IPs do proxy; só então o cabeçalho é considerado — e apenas quando o
+    /// peer está nesta lista.
+    pub trusted_proxies: Vec<IpAddr>,
 }
 
 impl AppConfig {
@@ -217,6 +239,16 @@ impl AppConfig {
             })?;
 
         let database_url = required(&lookup, "DATABASE_URL")?;
+        // Falha cedo: uma URL `sqlite://` herdada de configuração antiga abriria
+        // um erro obscuro na primeira consulta, muito depois do boot.
+        if !database_url.starts_with("postgres://") && !database_url.starts_with("postgresql://") {
+            return Err(ConfigError::Invalid {
+                key: "DATABASE_URL",
+                reason: "deve começar com postgres:// ou postgresql:// (o banco é PostgreSQL)"
+                    .to_owned(),
+            });
+        }
+        validate_url_credentials("DATABASE_URL", &database_url)?;
 
         let run_migrations = parse_bool(
             &optional(&lookup, "RUN_MIGRATIONS", "true"),
@@ -224,6 +256,13 @@ impl AppConfig {
         )?;
 
         let redis_url = lookup_value(&lookup, "REDIS_URL");
+        if let Some(url) = redis_url.as_deref() {
+            validate_url_credentials("REDIS_URL", url)?;
+        }
+
+        // Schema opcional: em desenvolvimento compartilhado evita misturar
+        // tabelas da API com as de outras aplicações no mesmo banco.
+        let database_schema = lookup_value(&lookup, "DATABASE_SCHEMA");
 
         let admin_seed = parse_admin_seed(&lookup)?;
 
@@ -263,6 +302,11 @@ impl AppConfig {
             crate::operation::DEFAULT_SHUTDOWN_DRAIN.as_secs(),
         )?;
 
+        // Token curto protege `/metrics`; vazio vira `None` e a rota não existe.
+        let metrics_token = lookup_value(&lookup, "METRICS_TOKEN");
+
+        let trusted_proxies = parse_trusted_proxies(&lookup)?;
+
         Ok(Self {
             environment,
             host,
@@ -270,6 +314,7 @@ impl AppConfig {
             database_url,
             run_migrations,
             redis_url,
+            database_schema,
             jwt_secret: JwtSecret(jwt_secret),
             jwt_access_ttl_secs,
             shutdown_on_tab_close,
@@ -278,6 +323,8 @@ impl AppConfig {
             allowed_origins,
             max_concurrent_requests,
             shutdown_drain_secs,
+            metrics_token,
+            trusted_proxies,
         })
     }
 }
@@ -315,6 +362,80 @@ where
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or(ConfigError::Missing { key })
+}
+
+/// Bytes de entropia recomendados ao gerar senha de serviço.
+///
+/// Vai na mensagem de erro como orientação concreta; o valor acompanha o
+/// exemplo `openssl rand -hex 32` documentado no `.env.example`.
+const RECOMMENDED_PASSWORD_BYTES: u8 = 32;
+
+/// Rejeita credencial contendo caractere que quebra o componente de URL.
+///
+/// Senhas geradas com `openssl rand -base64` produzem `/`, `+` e `=`. Dentro de
+/// `postgres://user:SENHA@host`, o `/` encerra a autoridade e `+` é lido como
+/// espaço — a URL deixa de apontar para o host certo, e o erro só aparece como
+/// "connection refused" no boot.
+///
+/// A checagem olha apenas o trecho `user:senha@`, para não recusar caracteres
+/// legítimos em query string ou caminho.
+///
+/// # Errors
+///
+/// Retorna [`ConfigError::Invalid`] quando a credencial tem `/`, `+` ou espaço.
+fn validate_url_credentials(key: &'static str, url: &str) -> Result<(), ConfigError> {
+    // Sem `@`, não há credencial embutida: nada a validar.
+    let Some((authority, _)) = url.split_once('@') else {
+        return Ok(());
+    };
+    let credentials = authority
+        .rsplit_once("//")
+        .map_or(authority, |(_, rest)| rest);
+
+    for forbidden in ['/', '+', ' ', '#', '?'] {
+        if credentials.contains(forbidden) {
+            return Err(ConfigError::Invalid {
+                key,
+                reason: format!(
+                    "credencial contém `{forbidden}`, que é inválido numa URL; \
+                     gere a senha com `openssl rand -hex {RECOMMENDED_PASSWORD_BYTES}`"
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Lê `TRUSTED_PROXIES` como lista de IPs separados por vírgula.
+///
+/// Vazio significa "API exposta diretamente": o rate limit usa o peer do socket
+/// e ignora `X-Forwarded-For`, que é forjável pelo cliente.
+///
+/// # Errors
+///
+/// Retorna [`ConfigError::Invalid`] quando algum valor não é um IP válido.
+/// Recusar no boot evita o pior cenário: uma config com erro de digitação faria
+/// o proxy não ser reconhecido, e o limite cairia no IP do proxy — exatamente o
+/// problema que `TRUSTED_PROXIES` existe para resolver.
+fn parse_trusted_proxies<F>(lookup: &F) -> Result<Vec<std::net::IpAddr>, ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let Some(raw) = lookup("TRUSTED_PROXIES") else {
+        return Ok(Vec::new());
+    };
+
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            entry.parse().map_err(|error| ConfigError::Invalid {
+                key: "TRUSTED_PROXIES",
+                reason: format!("`{entry}` não é um IP válido: {error}"),
+            })
+        })
+        .collect()
 }
 
 /// Lê uma variável opcional, caindo no `default` quando ausente ou vazia.
@@ -510,7 +631,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    /// Busca uma variável no ambiente simulado e retorna `None` quando ela não foi configurada.
     fn lookup<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
             pairs
@@ -520,13 +641,17 @@ mod tests {
         }
     }
 
+    /// Segredo JWT com tamanho mínimo válido para os testes de configuração.
     const VALID_SECRET: &str = "0123456789abcdef0123456789abcdef";
+    /// Senha de fixture que satisfaz a política do administrador inicial.
     const ADMIN_PASSWORD: &str = "ChangeMe-Admin-2026!";
 
+    /// Verifica o contrato identificado por `applies_defaults_for_optional_values` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn applies_defaults_for_optional_values() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
         ];
 
@@ -535,7 +660,10 @@ mod tests {
         assert_eq!(config.environment, Environment::Development);
         assert_eq!(config.host.to_string(), DEFAULT_HOST);
         assert_eq!(config.port, 8080);
-        assert_eq!(config.database_url, "sqlite://data/test.db");
+        assert_eq!(
+            config.database_url,
+            "postgres://user:pass@localhost:5432/test"
+        );
         assert!(!config.shutdown_on_tab_close);
         assert!(config.run_migrations);
         assert!(config.redis_url.is_none());
@@ -551,10 +679,12 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `parses_operational_limits_from_the_environment` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn parses_operational_limits_from_the_environment() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("MAX_CONCURRENT_REQUESTS", "32"),
             ("SHUTDOWN_DRAIN_SECS", "15"),
@@ -566,10 +696,12 @@ mod tests {
         assert_eq!(config.shutdown_drain_secs, 15);
     }
 
+    /// Verifica o contrato identificado por `rejects_zero_max_concurrent_requests` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_zero_max_concurrent_requests() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("MAX_CONCURRENT_REQUESTS", "0"),
         ];
@@ -585,10 +717,12 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `parses_admin_seed_when_both_values_are_present` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn parses_admin_seed_when_both_values_are_present() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("ADMIN_EMAIL", " Admin@Example.COM "),
             ("ADMIN_PASSWORD", ADMIN_PASSWORD),
@@ -601,10 +735,12 @@ mod tests {
         assert_eq!(seed.password(), ADMIN_PASSWORD);
     }
 
+    /// Verifica o contrato identificado por `rejects_admin_seed_with_only_email` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_admin_seed_with_only_email() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("ADMIN_EMAIL", "admin@example.com"),
         ];
@@ -619,10 +755,12 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `rejects_admin_seed_with_only_password` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_admin_seed_with_only_password() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("ADMIN_PASSWORD", ADMIN_PASSWORD),
         ];
@@ -632,10 +770,12 @@ mod tests {
         assert_eq!(error, ConfigError::Missing { key: "ADMIN_EMAIL" });
     }
 
+    /// Verifica o contrato identificado por `rejects_invalid_admin_email` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_invalid_admin_email() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("ADMIN_EMAIL", "nao-e-email"),
             ("ADMIN_PASSWORD", ADMIN_PASSWORD),
@@ -652,10 +792,12 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `rejects_weak_admin_password` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_weak_admin_password() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("ADMIN_EMAIL", "admin@example.com"),
             ("ADMIN_PASSWORD", "fraca"),
@@ -672,10 +814,12 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `debug_redacts_admin_seed` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn debug_redacts_admin_seed() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("ADMIN_EMAIL", "admin@example.com"),
             ("ADMIN_PASSWORD", ADMIN_PASSWORD),
@@ -690,11 +834,13 @@ mod tests {
         assert!(debug.contains("oculto"));
     }
 
+    /// Verifica o contrato identificado por `accepts_shutdown_on_tab_close_outside_production` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_shutdown_on_tab_close_outside_production() {
         let pairs = [
             ("SHUTDOWN_ON_TAB_CLOSE", "true"),
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
         ];
 
@@ -703,12 +849,14 @@ mod tests {
         assert!(config.shutdown_on_tab_close);
     }
 
+    /// Verifica o contrato identificado por `rejects_shutdown_on_tab_close_in_production` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_shutdown_on_tab_close_in_production() {
         let pairs = [
             ("APP_ENV", "production"),
             ("SHUTDOWN_ON_TAB_CLOSE", "true"),
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
         ];
 
@@ -723,11 +871,13 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `accepts_production_environment` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_production_environment() {
         let pairs = [
             ("APP_ENV", "production"),
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
         ];
 
@@ -736,19 +886,23 @@ mod tests {
         assert_eq!(config.environment, Environment::Production);
     }
 
+    /// Verifica o contrato identificado por `rejects_missing_jwt_secret` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_missing_jwt_secret() {
-        let pairs = [("DATABASE_URL", "sqlite://data/test.db")];
+        let pairs = [("DATABASE_URL", "postgres://user:pass@localhost:5432/test")];
 
         let error = AppConfig::from_lookup(lookup(&pairs)).expect_err("segredo ausente");
 
         assert_eq!(error, ConfigError::Missing { key: "JWT_SECRET" });
     }
 
+    /// Verifica o contrato identificado por `rejects_short_jwt_secret` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_short_jwt_secret() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", "curto"),
         ];
 
@@ -763,11 +917,13 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `rejects_invalid_port` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_invalid_port() {
         let pairs = [
             ("APP_PORT", "não-é-porta"),
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
         ];
 
@@ -782,6 +938,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `debug_does_not_leak_jwt_secret` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn debug_does_not_leak_jwt_secret() {
         let secret = JwtSecret(VALID_SECRET.to_owned());
@@ -789,10 +947,12 @@ mod tests {
         assert_eq!(format!("{secret:?}"), "JwtSecret(***)");
     }
 
+    /// Verifica o contrato identificado por `parses_custom_jwt_access_ttl` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn parses_custom_jwt_access_ttl() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("JWT_ACCESS_TTL_SECS", "300"),
         ];
@@ -802,10 +962,12 @@ mod tests {
         assert_eq!(config.jwt_access_ttl_secs, 300);
     }
 
+    /// Verifica o contrato identificado por `rejects_non_numeric_jwt_access_ttl` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_non_numeric_jwt_access_ttl() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("JWT_ACCESS_TTL_SECS", "quinze-minutos"),
         ];
@@ -821,10 +983,12 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `rejects_zero_jwt_access_ttl` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_zero_jwt_access_ttl() {
         let pairs = [
-            ("DATABASE_URL", "sqlite://data/test.db"),
+            ("DATABASE_URL", "postgres://user:pass@localhost:5432/test"),
             ("JWT_SECRET", VALID_SECRET),
             ("JWT_ACCESS_TTL_SECS", "0"),
         ];
@@ -835,6 +999,102 @@ mod tests {
             error,
             ConfigError::Invalid {
                 key: "JWT_ACCESS_TTL_SECS",
+                ..
+            }
+        ));
+    }
+
+    /// Verifica o contrato identificado por `accepts_hex_password_in_url` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
+    #[test]
+    fn accepts_hex_password_in_url() {
+        let pairs = [
+            (
+                "DATABASE_URL",
+                "postgres://user:0f1e2d3c4b5a@localhost:5432/app",
+            ),
+            ("JWT_SECRET", VALID_SECRET),
+        ];
+
+        let config = AppConfig::from_lookup(lookup(&pairs)).expect("senha hexadecimal é válida");
+
+        assert!(config.database_url.contains("0f1e2d3c4b5a"));
+    }
+
+    /// Verifica o contrato identificado por `rejects_base64_slash_in_database_password` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
+    #[test]
+    fn rejects_base64_slash_in_database_password() {
+        // `openssl rand -base64` produz `/`; numa URL ele encerra a autoridade
+        // e a conexão iria para o host errado.
+        let pairs = [
+            (
+                "DATABASE_URL",
+                "postgres://user:ab/cd+ef=@localhost:5432/app",
+            ),
+            ("JWT_SECRET", VALID_SECRET),
+        ];
+
+        let error = AppConfig::from_lookup(lookup(&pairs)).expect_err("senha com `/` é inválida");
+
+        assert!(matches!(
+            error,
+            ConfigError::Invalid {
+                key: "DATABASE_URL",
+                ..
+            }
+        ));
+    }
+
+    /// Verifica o contrato identificado por `rejects_base64_in_redis_password` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
+    #[test]
+    fn rejects_base64_in_redis_password() {
+        let pairs = [
+            ("DATABASE_URL", "postgres://user:hex@localhost:5432/app"),
+            ("JWT_SECRET", VALID_SECRET),
+            ("REDIS_URL", "redis://:ab/cd@localhost:6379"),
+        ];
+
+        let error = AppConfig::from_lookup(lookup(&pairs)).expect_err("senha com `/` é inválida");
+
+        assert!(matches!(
+            error,
+            ConfigError::Invalid {
+                key: "REDIS_URL",
+                ..
+            }
+        ));
+    }
+
+    /// Verifica o contrato identificado por `accepts_url_without_credentials` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
+    #[test]
+    fn accepts_url_without_credentials() {
+        let pairs = [
+            ("DATABASE_URL", "postgres://localhost:5432/app"),
+            ("JWT_SECRET", VALID_SECRET),
+            ("REDIS_URL", "redis://localhost:6379"),
+        ];
+
+        AppConfig::from_lookup(lookup(&pairs)).expect("URL sem credencial é válida");
+    }
+
+    /// Verifica o contrato identificado por `rejects_sqlite_url_so_the_boot_fails_early` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
+    #[test]
+    fn rejects_sqlite_url_so_the_boot_fails_early() {
+        let pairs = [
+            ("DATABASE_URL", "sqlite://data/api.db"),
+            ("JWT_SECRET", VALID_SECRET),
+        ];
+
+        let error = AppConfig::from_lookup(lookup(&pairs)).expect_err("sqlite é recusado");
+
+        assert!(matches!(
+            error,
+            ConfigError::Invalid {
+                key: "DATABASE_URL",
                 ..
             }
         ));

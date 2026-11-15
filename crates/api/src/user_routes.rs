@@ -42,6 +42,7 @@ use application::{DEFAULT_PAGE_SIZE, ManageUsers, NewUserInput, UpdateProfileInp
         (status = 403, description = "Requer Admin", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `list users`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn list_users_doc() {}
 
@@ -60,6 +61,7 @@ pub fn list_users_doc() {}
         (status = 422, description = "Dados inválidos", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `create user`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn create_user_doc() {}
 
@@ -77,6 +79,7 @@ pub fn create_user_doc() {}
         (status = 404, description = "Não encontrado", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `get user`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn get_user_doc() {}
 
@@ -96,6 +99,7 @@ pub fn get_user_doc() {}
         (status = 422, description = "Dados inválidos", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `update user`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn update_user_doc() {}
 
@@ -115,6 +119,7 @@ pub fn update_user_doc() {}
         (status = 422, description = "Papel inválido", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `change role`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn change_role_doc() {}
 
@@ -132,6 +137,7 @@ pub fn change_role_doc() {}
         (status = 404, description = "Não encontrado", body = ProblemDetails)
     )
 )]
+/// Declara no OpenAPI o contrato da operação `delete user`; não executa a rota e retorna `()`.
 #[allow(dead_code)]
 pub fn delete_user_doc() {}
 
@@ -171,6 +177,7 @@ pub struct UserResponse {
 }
 
 impl From<domain::User> for UserResponse {
+    /// Converte um usuário de domínio em DTO HTTP, omitindo o hash de senha e formatando os campos públicos; retorna a resposta serializável.
     fn from(user: domain::User) -> Self {
         Self {
             id: user.id().to_string(),
@@ -385,8 +392,11 @@ async fn delete_user(
 }
 
 /// Monta o caso de uso ligado às portas deste estado.
+///
+/// A trilha de auditoria entra sempre: toda mutação de usuário precisa deixar
+/// registro de quem a executou.
 fn manage(state: &AppState) -> ManageUsers<'_> {
-    ManageUsers::new(state.users.as_ref(), state.hasher.as_ref())
+    ManageUsers::new(state.users.as_ref(), state.hasher.as_ref()).with_audit(state.audit.as_ref())
 }
 
 /// Interpreta o identificador da URL, devolvendo `404` quando não é UUID.

@@ -1,7 +1,12 @@
+//! Portas que os casos de uso utilizam para hashing, usuários, tokens e persistência.
+//!
+//! Os traits mantêm a camada de aplicação independente de banco, Redis e HTTP.
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use domain::{AccessClaims, Email, PasswordHash, User, UserId};
 
+use crate::audit::AuditEntry;
 use crate::error::AppError;
 
 /// Porta de hashing de senhas.
@@ -41,14 +46,18 @@ pub trait UserRepository: Send + Sync {
     /// Retorna [`AppError::Infrastructure`] se a consulta falhar.
     async fn find_by_email(&self, email: &Email) -> Result<Option<User>, AppError>;
 
-    /// Persiste um usuário novo.
+    /// Persiste um usuário novo, opcionalmente com a entrada de auditoria.
+    ///
+    /// A auditoria entra na **mesma transação** do `INSERT`: uma alteração sem
+    /// registro de autor é pior que uma requisição recusada, porque o buraco só
+    /// aparece na investigação, quando já não há como reconstruir o fato.
     ///
     /// # Errors
     ///
     /// Retorna [`AppError::EmailAlreadyInUse`] quando já existe um usuário
     /// ativo com o mesmo e-mail e [`AppError::Infrastructure`] para as demais
-    /// falhas.
-    async fn insert(&self, user: &User) -> Result<(), AppError>;
+    /// falhas. Nada é gravado se qualquer etapa falhar.
+    async fn insert(&self, user: &User, audit: Option<&AuditEntry>) -> Result<(), AppError>;
 
     /// Lista usuários vivos, com paginação por offset.
     ///
@@ -68,7 +77,7 @@ pub trait UserRepository: Send + Sync {
     /// Retorna [`AppError::Infrastructure`] se a consulta falhar.
     async fn count(&self) -> Result<i64, AppError>;
 
-    /// Persiste alterações em um usuário existente.
+    /// Persiste alterações em um usuário existente, com a auditoria na mesma transação.
     ///
     /// Grava nome, e-mail, hash de senha, papel, estado e timestamps do valor
     /// recebido. A linha é localizada pelo `id` do próprio usuário.
@@ -78,7 +87,7 @@ pub trait UserRepository: Send + Sync {
     /// Retorna [`AppError::EmailAlreadyInUse`] quando o novo e-mail colide com
     /// outro registro ativo, [`AppError::UserNotFound`] quando a linha não
     /// existe e [`AppError::Infrastructure`] nas demais falhas.
-    async fn update(&self, user: &User) -> Result<(), AppError>;
+    async fn update(&self, user: &User, audit: Option<&AuditEntry>) -> Result<(), AppError>;
 }
 
 /// Porta de emissão e verificação do access token (JWT).

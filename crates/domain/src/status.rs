@@ -1,3 +1,7 @@
+//! Estado ativo/inativo compartilhado pelas entidades do domínio.
+//!
+//! Faz a conversão textual e a consulta de atividade de modo consistente.
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -49,6 +53,7 @@ impl EntityStatus {
 }
 
 impl fmt::Display for EntityStatus {
+    /// Formata o estado da entidade como texto estável e retorna o resultado da escrita no formatter.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
@@ -56,7 +61,7 @@ impl fmt::Display for EntityStatus {
 
 impl FromStr for EntityStatus {
     type Err = DomainError;
-
+    /// Converte o texto em estado de entidade; retorna o estado conhecido ou `DomainError` para valores desconhecidos.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         Self::parse(value)
     }
@@ -66,6 +71,8 @@ impl FromStr for EntityStatus {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `round_trips_through_string` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn round_trips_through_string() {
         for status in EntityStatus::ALL {
@@ -76,6 +83,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `rejects_unknown_status` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_unknown_status() {
         assert_eq!(
@@ -84,6 +93,8 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `reports_activity` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn reports_activity() {
         assert!(EntityStatus::Active.is_active());

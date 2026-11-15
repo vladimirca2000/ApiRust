@@ -1,3 +1,8 @@
+//! Rotas de operação e montagem dos endpoints públicos de saúde e prontidão.
+//!
+//! Diferencia a disponibilidade do processo (`/health`) da disponibilidade
+//! de suas dependências (`/ready`) e registra as rotas de apoio locais.
+
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
@@ -32,6 +37,7 @@ pub struct StatusResponse {
         (status = 200, description = "Processo ativo", body = StatusResponse)
     )
 )]
+/// Registra no OpenAPI o contrato de `GET /health`; não executa lógica de requisição e retorna `()`.
 #[allow(dead_code)]
 pub fn health_doc() {}
 
@@ -45,6 +51,7 @@ pub fn health_doc() {}
         (status = 503, description = "Banco indisponível", body = StatusResponse)
     )
 )]
+/// Registra no OpenAPI o contrato de `GET /ready`; não executa lógica de requisição e retorna `()`.
 #[allow(dead_code)]
 pub fn ready_doc() {}
 

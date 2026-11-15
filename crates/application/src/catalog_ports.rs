@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use domain::{Category, Product, Sku, UserId};
 
+use crate::audit::AuditEntry;
 use crate::error::AppError;
 
 /// Campos pelos quais uma listagem de produtos pode ser ordenada.
@@ -92,22 +93,24 @@ pub trait CategoryRepository: Send + Sync {
     /// Retorna [`AppError::Infrastructure`] em falha de consulta.
     async fn find_by_name(&self, name: &str) -> Result<Option<Category>, AppError>;
 
-    /// Persiste uma categoria nova.
+    /// Persiste uma categoria nova, com a auditoria na mesma transação.
     ///
     /// # Errors
     ///
     /// Retorna [`AppError::AlreadyInUse`] em colisão de nome com outra categoria
     /// ativa e [`AppError::Infrastructure`] nas demais falhas.
-    async fn insert(&self, category: &Category) -> Result<(), AppError>;
+    async fn insert(&self, category: &Category, audit: Option<&AuditEntry>)
+    -> Result<(), AppError>;
 
-    /// Persiste alterações em uma categoria existente.
+    /// Persiste alterações em uma categoria existente, com a auditoria na mesma transação.
     ///
     /// # Errors
     ///
     /// Retorna [`AppError::AlreadyInUse`] em colisão de nome,
     /// [`AppError::CategoryNotFound`] se a linha não existir e
     /// [`AppError::Infrastructure`] nas demais falhas.
-    async fn update(&self, category: &Category) -> Result<(), AppError>;
+    async fn update(&self, category: &Category, audit: Option<&AuditEntry>)
+    -> Result<(), AppError>;
 
     /// Lista categorias vivas com paginação estável.
     ///

@@ -7,42 +7,43 @@
 use application::{AppError, RefreshRecord, RefreshTokenStore};
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 /// Insere um refresh token recém-emitido.
 const INSERT: &str = "INSERT INTO refresh_tokens \
                       (id, user_id, token_hash, expires_at, created_at) \
-                      VALUES (?, ?, ?, ?, ?)";
+                      VALUES ($1, $2, $3, $4, $5)";
 
 /// Busca o registro pelo hash, incluindo revogados (necessário para detectar reuso).
 const FIND_BY_HASH: &str = "SELECT id, user_id, expires_at, revoked_at \
-                            FROM refresh_tokens WHERE token_hash = ?";
+                            FROM refresh_tokens WHERE token_hash = $1";
 
 /// Revoga um token específico, registrando o sucessor quando houver rotação.
-const REVOKE: &str = "UPDATE refresh_tokens SET revoked_at = ?, replaced_by_id = ? \
-                      WHERE token_hash = ? AND revoked_at IS NULL";
+const REVOKE: &str = "UPDATE refresh_tokens SET revoked_at = $1, replaced_by_id = $2 \
+                      WHERE token_hash = $3 AND revoked_at IS NULL";
 
 /// Revoga todos os tokens ainda vivos de um usuário.
-const REVOKE_ALL: &str = "UPDATE refresh_tokens SET revoked_at = ? \
-                          WHERE user_id = ? AND revoked_at IS NULL";
+const REVOKE_ALL: &str = "UPDATE refresh_tokens SET revoked_at = $1 \
+                          WHERE user_id = $2 AND revoked_at IS NULL";
 
 /// Repositório de refresh tokens sobre SQLite.
 #[derive(Debug, Clone)]
 pub struct SqlxRefreshTokenStore {
     /// Pool usado em todas as operações de persistência.
-    pool: SqlitePool,
+    pool: PgPool,
 }
 
 impl SqlxRefreshTokenStore {
     /// Monta o repositório sobre um pool já configurado.
     #[must_use]
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
 impl RefreshTokenStore for SqlxRefreshTokenStore {
+    /// Persiste o novo registro e retorna sucesso após a gravação; violações de unicidade, integridade ou falhas SQL são convertidas em erro da aplicação.
     async fn insert(
         &self,
         token_hash: &str,
@@ -69,7 +70,8 @@ impl RefreshTokenStore for SqlxRefreshTokenStore {
             revoked_at: None,
         })
     }
-
+    /// Busca o refresh token pelo hash persistido; retorna o registro encontrado,
+    /// `None` quando não existe ou erro de persistência.
     async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshRecord>, AppError> {
         let row = sqlx::query_as::<_, RefreshRow>(FIND_BY_HASH)
             .bind(token_hash)
@@ -79,7 +81,7 @@ impl RefreshTokenStore for SqlxRefreshTokenStore {
 
         row.map(RefreshRow::into_record).transpose()
     }
-
+    /// Marca o identificador do token como revogado até sua expiração; retorna sucesso ou erro se o armazenamento distribuído falhar.
     async fn revoke(
         &self,
         token_hash: &str,
@@ -96,7 +98,7 @@ impl RefreshTokenStore for SqlxRefreshTokenStore {
 
         Ok(())
     }
-
+    /// Revoga todos os refresh tokens do usuário e retorna sucesso ou erro de persistência.
     async fn revoke_all_for_user(
         &self,
         user_id: &str,

@@ -1,3 +1,7 @@
+//! Papéis de acesso e permissões associadas no domínio.
+//!
+//! Centraliza a política de menor privilégio usada por casos de uso e handlers.
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -57,6 +61,7 @@ impl Role {
 }
 
 impl fmt::Display for Role {
+    /// Formata o papel como texto estável e retorna o resultado da escrita no formatter.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
@@ -64,7 +69,7 @@ impl fmt::Display for Role {
 
 impl FromStr for Role {
     type Err = DomainError;
-
+    /// Converte o texto em papel de acesso; retorna o papel conhecido ou `DomainError` para valores desconhecidos.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         Self::parse(value)
     }
@@ -74,6 +79,8 @@ impl FromStr for Role {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `round_trips_through_string` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn round_trips_through_string() {
         for role in Role::ALL {
@@ -81,11 +88,15 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `parses_case_insensitively` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn parses_case_insensitively() {
         assert_eq!(Role::parse(" ADMIN ").expect("papel válido"), Role::Admin);
     }
 
+    /// Verifica o contrato identificado por `rejects_unknown_role` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_unknown_role() {
         assert_eq!(
@@ -94,6 +105,8 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `applies_least_privilege` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn applies_least_privilege() {
         assert!(Role::Admin.can_manage_users());

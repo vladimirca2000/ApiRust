@@ -10,6 +10,8 @@ mod category;
 mod email;
 /// Falhas de regra de negócio compartilhadas pelo domínio.
 mod error;
+/// Histórico do catálogo: movimentação de estoque e mudança de preço.
+pub mod history;
 /// Valor monetário em centavos.
 mod money;
 /// Política de senha e o hash já calculado.
@@ -35,6 +37,7 @@ pub use category::{
 };
 pub use email::{Email, MAX_EMAIL_LEN, MAX_LOCAL_PART_LEN};
 pub use error::DomainError;
+pub use history::{PriceChange, StockMovement, StockReason};
 pub use money::Money;
 pub use password::{MAX_PASSWORD_LEN, MIN_PASSWORD_LEN, PasswordHash, validate_password};
 pub use product::{MAX_PRODUCT_NAME_LEN, Product};

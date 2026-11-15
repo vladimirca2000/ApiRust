@@ -1,3 +1,8 @@
+//! Adaptador de hashing de senhas usando Argon2id.
+//!
+//! Implementa a porta da aplicação e converte falhas da biblioteca criptográfica
+//! em erros tipados sem registrar senhas ou hashes.
+
 use application::{AppError, PasswordHasher};
 use argon2::password_hash::{PasswordHash as PhcHash, SaltString, rand_core::OsRng};
 use argon2::{Argon2, PasswordHasher as _, PasswordVerifier as _};
@@ -22,6 +27,8 @@ impl Argon2PasswordHasher {
 
 #[async_trait]
 impl PasswordHasher for Argon2PasswordHasher {
+    /// Gera um hash Argon2id com salt aleatório para a senha recebida; retorna
+    /// `PasswordHash` ou erro se o processamento criptográfico falhar.
     async fn hash(&self, password: &str) -> Result<PasswordHash, AppError> {
         let password = password.to_owned();
 
@@ -29,7 +36,7 @@ impl PasswordHasher for Argon2PasswordHasher {
             .await
             .map_err(AppError::infrastructure)?
     }
-
+    /// Compara a senha com o hash Argon2id sem expor o segredo; retorna `true` se coincidir, `false` se não coincidir ou erro de verificação.
     async fn verify(&self, password: &str, hash: &PasswordHash) -> Result<bool, AppError> {
         let password = password.to_owned();
         let hash = hash.as_str().to_owned();

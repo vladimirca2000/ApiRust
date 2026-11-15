@@ -247,6 +247,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `page_lists_every_endpoint_from_the_catalog` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn page_lists_every_endpoint_from_the_catalog() {
         let html = render(&snapshot());
@@ -265,6 +267,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `page_does_not_hardcode_stale_phase_text` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn page_does_not_hardcode_stale_phase_text() {
         let html = render(&snapshot());
@@ -279,6 +283,8 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `page_reports_database_state` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn page_reports_database_state() {
         let ready = render(&HealthSnapshot {
@@ -294,6 +300,8 @@ mod tests {
         assert!(down.contains("banco: indisponível"));
     }
 
+    /// Verifica o contrato identificado por `page_escapes_special_characters` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn page_escapes_special_characters() {
         assert_eq!(escape("<script>"), "&lt;script&gt;");

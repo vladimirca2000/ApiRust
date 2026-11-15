@@ -85,6 +85,7 @@ impl JwtTokenService {
 
 #[async_trait]
 impl TokenService for JwtTokenService {
+    /// Assina um access token com as claims do usuário e retorna o token ou erro de assinatura.
     async fn issue_access(&self, user: &User, now: DateTime<Utc>) -> Result<String, AppError> {
         let issued_at = u64::try_from(now.timestamp()).map_err(AppError::infrastructure)?;
         let expires_at = u64::try_from((now + Duration::seconds(self.ttl_secs as i64)).timestamp())
@@ -102,7 +103,7 @@ impl TokenService for JwtTokenService {
         jsonwebtoken::encode(&Header::new(Algorithm::HS256), &claims, &self.encoding)
             .map_err(AppError::infrastructure)
     }
-
+    /// Valida assinatura, algoritmo e validade temporal do access token e retorna as claims ou erro de autenticação.
     async fn verify_access(&self, token: &str) -> Result<AccessClaims, AppError> {
         let decoded = jsonwebtoken::decode::<Claims>(token, &self.decoding, &self.validation())
             .map_err(|_| AppError::Authentication)?;
@@ -116,7 +117,7 @@ impl TokenService for JwtTokenService {
             audience: decoded.claims.aud,
         })
     }
-
+    /// Retorna o TTL do access token configurado para este serviço.
     fn access_ttl_secs(&self) -> u64 {
         self.ttl_secs
     }

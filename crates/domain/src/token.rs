@@ -48,6 +48,7 @@ impl RefreshTokenSecret {
 }
 
 impl fmt::Debug for RefreshTokenSecret {
+    /// Formata a representação protegida do refresh token sem revelar o segredo e retorna o resultado da escrita.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("RefreshTokenSecret(***)")
     }

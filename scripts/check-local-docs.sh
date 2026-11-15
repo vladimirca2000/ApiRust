@@ -8,7 +8,8 @@
 #   1. Nome de variável com 1–2 caracteres ou genérico (`value`, `data`, `tmp`…)
 #      precisa de um comentário `//` na linha imediatamente acima.
 #   2. Literal numérico "mágico" (fora de 0, 1, 2, 0.0, 1.0) precisa de
-#      comentário acima ou de vir de uma constante nomeada.
+#      comentário acima ou de vir de uma constante nomeada. Placeholders de SQL
+#      (`$1`, `$10`) ficam de fora: identificam posição de bind, não uma regra.
 #
 # Nomes descritivos (`foreign_keys`, `jwt_access_ttl_secs`) são aprovados sem
 # comentário: repetir o nome em texto seria ruído, não documentação.
@@ -30,7 +31,9 @@ readonly VIOLATIONS_FILE="$(mktemp)"
 trap 'rm -f "${VIOLATIONS_FILE}"' EXIT
 
 # Número que não faz parte de identificador, versão de string nem comentário.
-readonly MAGIC_NUMBER_RE='(^|[^A-Za-z0-9_."])[[:space:]]*([0-9]+(\.[0-9]+)?)'
+# `\$[0-9]+` é excluído porque placeholders de SQL (`$1`, `$10`) não são
+# constantes de negócio: são posição de bind, ditada pela ordem dos argumentos.
+readonly MAGIC_NUMBER_RE='(^|[^A-Za-z0-9_."$])[[:space:]]*([0-9]+(\.[0-9]+)?)'
 
 # Percorre cada arquivo de produção e valida as regras linha a linha.
 check_file() {

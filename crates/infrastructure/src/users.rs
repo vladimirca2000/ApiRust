@@ -1,23 +1,26 @@
+//! Adaptador SQLx da porta `UserRepository` sobre PostgreSQL.
+
+use application::audit::AuditEntry;
 use application::{AppError, UserRepository};
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use domain::{Email, EntityStatus, PasswordHash, Role, User, UserId, UserTimestamps};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 /// Busca um usuário vivo por identificador, ignorando soft delete.
 const FIND_BY_ID: &str = "SELECT id, name, email, password_hash, role, status, created_at, \
                           updated_at, deleted_at \
-                          FROM users WHERE id = ? AND deleted_at IS NULL";
+                          FROM users WHERE id = $1 AND deleted_at IS NULL";
 
 /// Busca um usuário vivo por e-mail, base da unicidade entre ativos.
 const FIND_BY_EMAIL: &str = "SELECT id, name, email, password_hash, role, status, created_at, \
                              updated_at, deleted_at \
-                             FROM users WHERE email = ? AND deleted_at IS NULL";
+                             FROM users WHERE email = $1 AND deleted_at IS NULL";
 
 /// Insere um usuário novo; violações do índice parcial viram `EmailAlreadyInUse`.
 const INSERT: &str = "INSERT INTO users \
                       (id, name, email, password_hash, role, status, created_at, updated_at, deleted_at) \
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
 
 /// Lista usuários vivos com paginação estável.
 ///
@@ -26,14 +29,20 @@ const INSERT: &str = "INSERT INTO users \
 const LIST: &str = "SELECT id, name, email, password_hash, role, status, created_at, \
                     updated_at, deleted_at \
                     FROM users WHERE deleted_at IS NULL \
-                    ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?";
+                    ORDER BY created_at ASC, id ASC LIMIT $1 OFFSET $2";
 
 /// Conta os usuários vivos, para o total da paginação.
 const COUNT: &str = "SELECT count(*) FROM users WHERE deleted_at IS NULL";
 
 /// Atualiza todos os campos mutáveis de um usuário existente.
-const UPDATE: &str = "UPDATE users SET name = ?, email = ?, password_hash = ?, role = ?, \
-                      status = ?, updated_at = ?, deleted_at = ? WHERE id = ?";
+const UPDATE: &str = "UPDATE users SET name = $1, email = $2, password_hash = $3, role = $4, \
+                      status = $5, updated_at = $6, deleted_at = $7 WHERE id = $8";
+
+/// Nome do índice parcial que sustenta a unicidade de e-mail entre ativos.
+///
+/// Citado nos erros do PostgreSQL, é o que identifica a colisão sem depender do
+/// texto da mensagem.
+const EMAIL_UNIQUE_INDEX: &str = "users_email_active_unique";
 
 /// Repositório SQLx para usuários.
 ///
@@ -42,7 +51,7 @@ const UPDATE: &str = "UPDATE users SET name = ?, email = ?, password_hash = ?, r
 #[derive(Debug, Clone)]
 pub struct SqlxUserRepository {
     /// Pool usado em todas as consultas do repositório.
-    pool: SqlitePool,
+    pool: PgPool,
 }
 
 impl SqlxUserRepository {
@@ -51,13 +60,14 @@ impl SqlxUserRepository {
     /// O pool é clonado (handle compartilhado), então o repositório pode viver
     /// além do escopo de quem o criou.
     #[must_use]
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
 impl UserRepository for SqlxUserRepository {
+    /// Busca o registro pelo identificador e retorna `Some` quando encontrado, `None` quando ausente ou erro de persistência.
     async fn find_by_id(&self, id: UserId) -> Result<Option<User>, AppError> {
         let row = sqlx::query_as::<_, UserRow>(FIND_BY_ID)
             .bind(id.to_string())
@@ -67,7 +77,7 @@ impl UserRepository for SqlxUserRepository {
 
         row.map(User::try_from).transpose()
     }
-
+    /// Busca o usuário pelo e-mail normalizado e retorna `Some` quando encontrado, `None` quando ausente ou erro de persistência.
     async fn find_by_email(&self, email: &Email) -> Result<Option<User>, AppError> {
         let row = sqlx::query_as::<_, UserRow>(FIND_BY_EMAIL)
             .bind(email.as_str())
@@ -77,9 +87,11 @@ impl UserRepository for SqlxUserRepository {
 
         row.map(User::try_from).transpose()
     }
+    /// Persiste o novo registro e retorna sucesso após a gravação; violações de unicidade, integridade ou falhas SQL são convertidas em erro da aplicação.
+    async fn insert(&self, user: &User, audit: Option<&AuditEntry>) -> Result<(), AppError> {
+        let mut transaction = self.pool.begin().await.map_err(AppError::infrastructure)?;
 
-    async fn insert(&self, user: &User) -> Result<(), AppError> {
-        let result = sqlx::query(INSERT)
+        sqlx::query(INSERT)
             .bind(user.id().to_string())
             .bind(user.name())
             .bind(user.email().as_str())
@@ -89,12 +101,17 @@ impl UserRepository for SqlxUserRepository {
             .bind(format_timestamp(user.created_at()))
             .bind(format_timestamp(user.updated_at()))
             .bind(user.deleted_at().map(format_timestamp))
-            .execute(&self.pool)
-            .await;
+            .execute(&mut *transaction)
+            .await
+            .map_err(map_write_error)?;
 
-        result.map(|_| ()).map_err(map_write_error)
+        if let Some(entry) = audit {
+            crate::audit_tx::insert_audit(&mut transaction, entry).await?;
+        }
+
+        transaction.commit().await.map_err(AppError::infrastructure)
     }
-
+    /// Consulta uma página de registros aplicando offset e limite e retorna os itens ordenados ou erro de persistência.
     async fn list(&self, offset: i64, limit: i64) -> Result<Vec<User>, AppError> {
         let rows = sqlx::query_as::<_, UserRow>(LIST)
             .bind(limit)
@@ -105,16 +122,18 @@ impl UserRepository for SqlxUserRepository {
 
         rows.into_iter().map(User::try_from).collect()
     }
-
+    /// Conta os registros considerados ativos pelo repositório e retorna o total ou erro de persistência.
     async fn count(&self) -> Result<i64, AppError> {
         sqlx::query_scalar::<_, i64>(COUNT)
             .fetch_one(&self.pool)
             .await
             .map_err(AppError::infrastructure)
     }
+    /// Atualiza o registro persistido e retorna sucesso após a gravação; ausência, conflito de versão ou falha SQL são convertidos em erro da aplicação.
+    async fn update(&self, user: &User, audit: Option<&AuditEntry>) -> Result<(), AppError> {
+        let mut transaction = self.pool.begin().await.map_err(AppError::infrastructure)?;
 
-    async fn update(&self, user: &User) -> Result<(), AppError> {
-        let result = sqlx::query(UPDATE)
+        let executed = sqlx::query(UPDATE)
             .bind(user.name())
             .bind(user.email().as_str())
             .bind(user.password_hash().as_str())
@@ -123,14 +142,19 @@ impl UserRepository for SqlxUserRepository {
             .bind(format_timestamp(user.updated_at()))
             .bind(user.deleted_at().map(format_timestamp))
             .bind(user.id().to_string())
-            .execute(&self.pool)
-            .await;
+            .execute(&mut *transaction)
+            .await
+            .map_err(map_write_error)?;
 
-        let executed = result.map_err(map_write_error)?;
         if executed.rows_affected() == 0 {
             return Err(AppError::UserNotFound);
         }
-        Ok(())
+
+        if let Some(entry) = audit {
+            crate::audit_tx::insert_audit(&mut transaction, entry).await?;
+        }
+
+        transaction.commit().await.map_err(AppError::infrastructure)
     }
 }
 
@@ -162,7 +186,7 @@ struct UserRow {
 
 impl TryFrom<UserRow> for User {
     type Error = AppError;
-
+    /// Converte uma linha do PostgreSQL em entidade de usuário, reaplicando as invariantes do domínio; retorna o usuário ou `AppError` se os dados persistidos forem inválidos.
     fn try_from(row: UserRow) -> Result<Self, Self::Error> {
         let timestamps = UserTimestamps::new(
             parse_timestamp("created_at", &row.created_at)?,
@@ -185,10 +209,11 @@ impl TryFrom<UserRow> for User {
     }
 }
 
-/// Serializa um instante para o formato de texto aceito pelo SQLite.
+/// Serializa um instante para o formato de texto gravado nas colunas `TEXT`.
 ///
-/// Usa RFC 3339 em UTC com precisão de microssegundos, garantindo ordenação
-/// lexicográfica equivalente à cronológica.
+/// O schema guarda datas como texto RFC 3339 em UTC com microssegundos: a
+/// ordenação lexicográfica equivale à cronológica, e a comparação com
+/// `created_at`/`updated_at` continua simples.
 fn format_timestamp(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
@@ -210,17 +235,15 @@ fn parse_timestamp(column: &str, value: &str) -> Result<DateTime<Utc>, AppError>
         })
 }
 
-/// Traduz erros de escrita do SQLite para o vocabulário da aplicação.
+/// Traduz erros de escrita do PostgreSQL para o vocabulário da aplicação.
 ///
 /// Violação do índice parcial `users_email_active_unique` vira
 /// [`AppError::EmailAlreadyInUse`], que o caso de uso sabe tratar como
-/// "já existe"; os demais erros permanecem como falha de infraestrutura.
+/// "já existe". A identificação usa `SQLSTATE` e o nome da constraint: o
+/// PostgreSQL informa o índice violado, e a mensagem varia com o locale.
 fn map_write_error(error: sqlx::Error) -> AppError {
-    if let sqlx::Error::Database(database_error) = &error {
-        if database_error.is_unique_violation() && database_error.message().contains("users.email")
-        {
-            return AppError::EmailAlreadyInUse;
-        }
+    if crate::pg_errors::is_unique_violation_on(&error, EMAIL_UNIQUE_INDEX) {
+        return AppError::EmailAlreadyInUse;
     }
 
     AppError::infrastructure(error)

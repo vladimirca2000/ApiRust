@@ -1,3 +1,8 @@
+//! Rastreamento de sessões de desenvolvimento e coordenação do shutdown.
+//!
+//! Permite encerrar o servidor após a última sessão conectada quando esse
+//! comportamento está habilitado; em produção, a opção permanece desligada.
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -126,6 +131,8 @@ impl Drop for SessionConnection {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `disabled_tracker_never_requests_shutdown` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[tokio::test]
     async fn disabled_tracker_never_requests_shutdown() {
         let tracker = SessionTracker::new(false);
@@ -140,6 +147,8 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `shutdown_fires_after_last_connection_drops` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[tokio::test]
     async fn shutdown_fires_after_last_connection_drops() {
         let tracker = SessionTracker::with_grace(true, Duration::from_millis(50));

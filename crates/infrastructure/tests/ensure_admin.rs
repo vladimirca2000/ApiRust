@@ -12,19 +12,21 @@ use infrastructure::{Argon2PasswordHasher, SqlxUserRepository};
 
 use common::TempDb;
 
+/// E-mail fixo usado para validar o seed do administrador.
 const ADMIN_EMAIL: &str = "admin@example.com";
+/// Senha forte usada pelo seed de teste, sem ser uma credencial de produção.
 const ADMIN_PASSWORD: &str = "Senha-Forte-2026!";
-
+/// Cria um e-mail válido e fixo para os cenários de teste; retorna o value object correspondente.
 fn email() -> Email {
     Email::parse(ADMIN_EMAIL).expect("e-mail válido")
 }
-
+/// Retorna um instante UTC fixo para tornar as verificações determinísticas.
 fn now() -> DateTime<Utc> {
     DateTime::parse_from_rfc3339("2026-11-14T12:00:00Z")
         .expect("data válida")
         .with_timezone(&Utc)
 }
-
+/// Consulta e retorna a quantidade de usuários persistidos no banco temporário.
 async fn count_users(db: &infrastructure::Database) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM users WHERE deleted_at IS NULL")
         .fetch_one(db.pool())
@@ -32,8 +34,11 @@ async fn count_users(db: &infrastructure::Database) -> i64 {
         .expect("contar usuários")
 }
 
+/// Verifica o contrato identificado por `first_boot_creates_admin_with_argon2id_hash` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn first_boot_creates_admin_with_argon2id_hash() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("seed-create").await;
     let repository = SqlxUserRepository::new(temp.db.pool().clone());
     let hasher = Argon2PasswordHasher::new();
@@ -71,8 +76,11 @@ async fn first_boot_creates_admin_with_argon2id_hash() {
     );
 }
 
+/// Verifica o contrato identificado por `second_boot_is_a_no_op_and_keeps_the_same_row` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn second_boot_is_a_no_op_and_keeps_the_same_row() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("seed-idempotent").await;
     let repository = SqlxUserRepository::new(temp.db.pool().clone());
     let hasher = Argon2PasswordHasher::new();
@@ -139,8 +147,11 @@ async fn second_boot_is_a_no_op_and_keeps_the_same_row() {
     );
 }
 
+/// Verifica o contrato identificado por `weak_password_is_rejected_before_touching_the_database` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn weak_password_is_rejected_before_touching_the_database() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("seed-weak").await;
     let repository = SqlxUserRepository::new(temp.db.pool().clone());
     let hasher = Argon2PasswordHasher::new();
@@ -157,8 +168,11 @@ async fn weak_password_is_rejected_before_touching_the_database() {
     assert_eq!(count_users(&temp.db).await, 0);
 }
 
+/// Verifica o contrato identificado por `admin_can_be_reprovisioned_after_soft_delete` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_can_be_reprovisioned_after_soft_delete() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("seed-soft-delete").await;
     let repository = SqlxUserRepository::new(temp.db.pool().clone());
     let hasher = Argon2PasswordHasher::new();
@@ -174,7 +188,7 @@ async fn admin_can_be_reprovisioned_after_soft_delete() {
         other => panic!("esperado Created, recebido {other:?}"),
     };
 
-    sqlx::query("UPDATE users SET deleted_at = ?, status = 'inactive' WHERE id = ?")
+    sqlx::query("UPDATE users SET deleted_at = $1, status = 'inactive' WHERE id = $2")
         .bind("2026-11-15T12:00:00Z")
         .bind(first_id.to_string())
         .execute(temp.db.pool())

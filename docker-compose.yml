@@ -1,0 +1,86 @@
+# Ambiente local completo: API + PostgreSQL + Redis.
+#
+# Uso:
+#   cp .env.example .env        # preencha JWT_SECRET, POSTGRES_PASSWORD e REDIS_PASSWORD
+#   docker compose up --build
+#
+# O PostgreSQL guarda o schema da aplicação; o Redis é o estado compartilhado de
+# rate limit e revogação de access token. Os dois são obrigatórios em produção:
+# a API recusa subir sem `DATABASE_URL` válida ou sem `REDIS_URL`.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: apirust-postgres
+    # Senha obrigatória: um Postgres com senha default num host publicado é
+    # acesso direto ao schema. `:?` aborta o `up` quando ela não está definida.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-apirust}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-apirust}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` valida o servidor aceitando conexões, não só a porta aberta.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-apirust} -d ${POSTGRES_DB:-apirust}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: apirust-redis
+    # Exige senha mesmo em rede interna: um Redis aberto no host é vetor de
+    # escrita de chaves e de leitura de denylist.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: apirust-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8080"
+      # Credenciais interpoladas em URL: use senha **hexadecimal**.
+      # `base64` produz `/`, `+` e `=` (ex.: `ab/cd+ef=`), que numa URL mudam o
+      # significado do componente — `/` vira separador de caminho e `+` é lido
+      # como espaço. Gere com `openssl rand -hex 32`.
+      DATABASE_URL: postgres://${POSTGRES_USER:-apirust}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-apirust}
+      RUN_MIGRATIONS: "true"
+      REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env}
+      JWT_ACCESS_TTL_SECS: ${JWT_ACCESS_TTL_SECS:-900}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      RUST_LOG: ${RUST_LOG:-info,api=info}
+    ports:
+      - "8080:8080"
+    # `stop_grace_period` maior que SHUTDOWN_DRAIN_SECS (30 s) para o drain
+    # terminar antes de o Docker enviar SIGKILL.
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:

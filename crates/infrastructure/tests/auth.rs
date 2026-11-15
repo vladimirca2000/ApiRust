@@ -46,15 +46,22 @@ async fn seed_user(temp: &TempDb, email: &str) -> User {
     )
     .expect("usuário válido");
 
-    repository.insert(&user).await.expect("inserir usuário");
+    repository
+        .insert(&user, None)
+        .await
+        .expect("inserir usuário");
     user
 }
 
 /// Estrutura que reúne casos de uso e adaptadores sobre o mesmo banco.
 struct Fixture {
+    /// Repositório SQLx usado pelo caso de uso de autenticação.
     users: SqlxUserRepository,
+    /// Hasher Argon2id usado para criar/verificar credenciais de teste.
     hasher: Argon2PasswordHasher,
+    /// Serviço JWT configurado com o segredo exclusivo dos testes.
     tokens: JwtTokenService,
+    /// Persistência dos refresh tokens do cenário.
     refresh: SqlxRefreshTokenStore,
 }
 
@@ -75,8 +82,11 @@ impl Fixture {
     }
 }
 
+/// Verifica o contrato identificado por `login_returns_a_verifiable_access_token_and_a_persisted_refresh_hash` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn login_returns_a_verifiable_access_token_and_a_persisted_refresh_hash() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("login").await;
     let fixture = Fixture::new(&temp);
     let user = seed_user(&temp, "user@example.com").await;
@@ -102,7 +112,7 @@ async fn login_returns_a_verifiable_access_token_and_a_persisted_refresh_hash() 
 
     // O banco guarda o hash, nunca o token em claro.
     let stored: String =
-        sqlx::query_scalar("SELECT token_hash FROM refresh_tokens WHERE user_id = ?")
+        sqlx::query_scalar("SELECT token_hash FROM refresh_tokens WHERE user_id = $1")
             .bind(user.id().to_string())
             .fetch_one(temp.db.pool())
             .await
@@ -120,8 +130,11 @@ async fn login_returns_a_verifiable_access_token_and_a_persisted_refresh_hash() 
     assert_eq!(stored.len(), 64, "SHA-256 em hex tem 64 caracteres");
 }
 
+/// Verifica o contrato identificado por `login_rejects_wrong_password_without_revealing_cause` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn login_rejects_wrong_password_without_revealing_cause() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("login-wrong").await;
     let fixture = Fixture::new(&temp);
     seed_user(&temp, "user@example.com").await;
@@ -139,8 +152,11 @@ async fn login_rejects_wrong_password_without_revealing_cause() {
     assert!(matches!(error, application::AppError::Authentication));
 }
 
+/// Verifica o contrato identificado por `login_rejects_unknown_email_with_the_same_error_as_wrong_password` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn login_rejects_unknown_email_with_the_same_error_as_wrong_password() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("login-unknown").await;
     let fixture = Fixture::new(&temp);
 
@@ -160,13 +176,16 @@ async fn login_rejects_unknown_email_with_the_same_error_as_wrong_password() {
     );
 }
 
+/// Verifica o contrato identificado por `login_rejects_inactive_user` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn login_rejects_inactive_user() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("login-inactive").await;
     let fixture = Fixture::new(&temp);
     let user = seed_user(&temp, "user@example.com").await;
 
-    sqlx::query("UPDATE users SET status = 'inactive' WHERE id = ?")
+    sqlx::query("UPDATE users SET status = 'inactive' WHERE id = $1")
         .bind(user.id().to_string())
         .execute(temp.db.pool())
         .await
@@ -185,8 +204,11 @@ async fn login_rejects_inactive_user() {
     assert!(matches!(error, application::AppError::Authentication));
 }
 
+/// Verifica o contrato identificado por `refresh_rotates_the_token_and_revokes_the_previous_one` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn refresh_rotates_the_token_and_revokes_the_previous_one() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("refresh-rotate").await;
     let fixture = Fixture::new(&temp);
     seed_user(&temp, "user@example.com").await;
@@ -222,7 +244,7 @@ async fn refresh_rotates_the_token_and_revokes_the_previous_one() {
 
     // O token antigo fica revogado e aponta para o sucessor.
     let (revoked_at, replaced_by): (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT revoked_at, replaced_by_id FROM refresh_tokens WHERE token_hash = ?",
+        "SELECT revoked_at, replaced_by_id FROM refresh_tokens WHERE token_hash = $1",
     )
     .bind(&old_hash)
     .fetch_one(temp.db.pool())
@@ -233,8 +255,11 @@ async fn refresh_rotates_the_token_and_revokes_the_previous_one() {
     assert!(replaced_by.is_some(), "deve registrar o sucessor");
 }
 
+/// Verifica o contrato identificado por `reusing_a_rotated_refresh_token_revokes_the_whole_family` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn reusing_a_rotated_refresh_token_revokes_the_whole_family() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("refresh-reuse").await;
     let fixture = Fixture::new(&temp);
     let user = seed_user(&temp, "user@example.com").await;
@@ -271,7 +296,7 @@ async fn reusing_a_rotated_refresh_token_revokes_the_whole_family() {
 
     // Toda a família deve estar revogada — inclusive o token ainda válido.
     let alive: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM refresh_tokens WHERE user_id = ? AND revoked_at IS NULL",
+        "SELECT count(*) FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL",
     )
     .bind(user.id().to_string())
     .fetch_one(temp.db.pool())
@@ -296,8 +321,11 @@ async fn reusing_a_rotated_refresh_token_revokes_the_whole_family() {
     ));
 }
 
+/// Verifica o contrato identificado por `refresh_rejects_expired_token` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn refresh_rejects_expired_token() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("refresh-expired").await;
     let fixture = Fixture::new(&temp);
     let user = seed_user(&temp, "user@example.com").await;
@@ -326,8 +354,11 @@ async fn refresh_rejects_expired_token() {
     assert!(matches!(outcome, RotationOutcome::Invalid));
 }
 
+/// Verifica o contrato identificado por `refresh_rejects_unknown_token` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn refresh_rejects_unknown_token() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("refresh-unknown").await;
     let fixture = Fixture::new(&temp);
     let use_case = fixture.authenticate();
@@ -345,8 +376,11 @@ async fn refresh_rejects_unknown_token() {
     assert!(matches!(outcome, RotationOutcome::Invalid));
 }
 
+/// Verifica o contrato identificado por `logout_revokes_the_presented_token_and_is_idempotent` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn logout_revokes_the_presented_token_and_is_idempotent() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("logout").await;
     let fixture = Fixture::new(&temp);
     seed_user(&temp, "user@example.com").await;
@@ -369,7 +403,7 @@ async fn logout_revokes_the_presented_token_and_is_idempotent() {
         .expect("logout repetido");
 
     let revoked: Option<String> =
-        sqlx::query_scalar("SELECT revoked_at FROM refresh_tokens WHERE token_hash = ?")
+        sqlx::query_scalar("SELECT revoked_at FROM refresh_tokens WHERE token_hash = $1")
             .bind(&hash)
             .fetch_one(temp.db.pool())
             .await
@@ -385,8 +419,11 @@ async fn logout_revokes_the_presented_token_and_is_idempotent() {
     assert!(matches!(outcome, RotationOutcome::Reused));
 }
 
+/// Verifica o contrato identificado por `revoke_all_for_user_only_affects_that_user` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn revoke_all_for_user_only_affects_that_user() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("revoke-all").await;
     let fixture = Fixture::new(&temp);
     let first = seed_user(&temp, "a@example.com").await;
@@ -416,7 +453,7 @@ async fn revoke_all_for_user_only_affects_that_user() {
     assert_eq!(revoked, 1);
 
     let second_alive: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM refresh_tokens WHERE user_id = ? AND revoked_at IS NULL",
+        "SELECT count(*) FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL",
     )
     .bind(second.id().to_string())
     .fetch_one(temp.db.pool())
@@ -429,6 +466,7 @@ async fn revoke_all_for_user_only_affects_that_user() {
 /// Garante que o timestamp persistido é comparável como texto.
 #[tokio::test]
 async fn persisted_timestamps_round_trip() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("refresh-ts").await;
     let fixture = Fixture::new(&temp);
     let user = seed_user(&temp, "user@example.com").await;

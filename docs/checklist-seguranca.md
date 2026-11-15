@@ -67,6 +67,18 @@ Validação externa (não dá para fechar só com o repositório): TLS no revers
 proxy, `data/` gravável só pelo processo da API, e o advisory
 `RUSTSEC-2026-0459` (SQLite WAL) mitigado por essa permissão de diretório.
 
+## Risco aceito conscientemente
+
+| Item | Risco | Mitigação atual | Condição para reavaliar |
+|---|---|---|---|
+| Senha do Redis (`admin`) em texto puro no `.env`, fraca e igual ao usuário | quem lê o arquivo ou adivinha a senha controla rate limit e denylist | instância de laboratório em rede interna; `.env` no `.gitignore`; credencial nunca logada | **qualquer** exposição fora da rede interna ou uso compartilhado do Redis |
+| Banco PostgreSQL acessível por `userapp/userapp` | acesso direto ao schema, sem passar pela API | rede interna; schema dedicado | exposição do serviço ou dado real de cliente |
+
+O risco está aceito por decisão explícita do responsável, registrado no próprio
+`.env` junto da variável. A senha de serviço nunca deve ser a mesma do usuário:
+para ambiente exposto, `openssl rand -base64 32` e `REDIS_PASSWORD` sem default
+(o compose já exige a variável via `:?`).
+
 ## HTTP e operação
 
 | Controle | Onde | Evidência |
@@ -83,6 +95,21 @@ proxy, `data/` gravável só pelo processo da API, e o advisory
 ## Itens adiados (não são falhas desta fase)
 
 Registrados na [Fase 8](plano-de-implementacao.md#fase-8--dívidas-técnicas-e-itens-fora-do-escopo):
-rate limit no Redis, denylist de `jti`, auditoria, métricas Prometheus,
-Dockerfile. Nenhum deles é um buraco no limite de confiança do MVP de uma
-instância; viram risco quando houver mais de uma réplica.
+multi-tenancy. Os demais itens daquela fase — rate limit no Redis, denylist de
+`jti`, auditoria, métricas Prometheus e Dockerfile — foram entregues.
+
+## Achados da análise de QA
+
+A revisão de qualidade em [`analise-qa.md`](analise-qa.md) registra 10 achados.
+Os de prioridade média já estão fechados:
+
+| Achado | Estado |
+|---|---|
+| A1 — senha default `admin` no compose | fechado: `${REDIS_PASSWORD:?}` obrigatório |
+| A2 — rate limit chaveado no IP do socket | **aberto** (decisão de deploy: proxy vs. direto) |
+| A3 — CI não executa testes de Redis | **fechado**: `services:` de PostgreSQL e Redis no workflow + passo que falha em `SKIP:` |
+| A4 — logout sem Bearer sem teste dedicado | aberto (comportamento documentado) |
+
+A revisão de código em [`revisao-codigo.md`](revisao-codigo.md) fechou seis
+achados adicionais, incluindo dois que afetavam dados: o `close()` apagava o
+schema da aplicação e a auditoria podia ficar separada da mutação.

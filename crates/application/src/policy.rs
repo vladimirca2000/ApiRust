@@ -166,6 +166,8 @@ mod tests {
         Actor::new(actor_id(), role)
     }
 
+    /// Verifica o contrato identificado por `only_admin_can_list_and_create` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn only_admin_can_list_and_create() {
         assert!(UserAction::List.authorize(actor(Role::Admin)).is_ok());
@@ -183,6 +185,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `user_can_read_and_update_own_profile` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn user_can_read_and_update_own_profile() {
         assert!(
@@ -197,6 +201,8 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `user_cannot_read_or_update_someone_else` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn user_cannot_read_or_update_someone_else() {
         assert!(matches!(
@@ -209,6 +215,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `manager_has_no_user_management_privileges` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn manager_has_no_user_management_privileges() {
         assert!(matches!(
@@ -225,6 +233,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `admin_can_manage_other_users` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn admin_can_manage_other_users() {
         for action in [
@@ -241,6 +251,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `admin_cannot_change_own_role` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn admin_cannot_change_own_role() {
         assert!(matches!(
@@ -249,6 +261,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `admin_cannot_delete_own_account` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn admin_cannot_delete_own_account() {
         assert!(matches!(
@@ -257,6 +271,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `admin_can_update_own_profile` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn admin_can_update_own_profile() {
         assert!(

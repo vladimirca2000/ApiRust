@@ -10,13 +10,9 @@ all-features = false
 version = 2
 yanked = "deny"
 ignore = [
-    # RUSTSEC-2026-0459 — libsqlite3-sys 0.30.1 (transitiva via sqlx 0.8.6).
-    # A correção exige SQLite >= 3.54.0; o sqlx 0.9 ainda não chegou lá. O
-    # ataque exige que um terceiro local escreva um par .db/-wal malicioso.
-    # Ver justificativa completa em `.cargo/audit.toml`.
-    "RUSTSEC-2026-0459",
     # RUSTSEC-2023-0071 — rsa 0.9.10 (Marvin). Só aparece via sqlx-mysql, que
     # o projeto não habilita. Ver `.cargo/audit.toml`.
+    # Reavaliar quando o SQLx atualizar a linha do `rsa` (ou parar de puxá-la).
     "RUSTSEC-2023-0071",
     # RUSTSEC-2026-0367/0368/0369/0429 — zip 3.0.0, só como *build-dependency* do
     # utoipa-swagger-ui (extração do dist da UI no compile). O binário da API

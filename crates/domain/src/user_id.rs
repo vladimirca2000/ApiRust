@@ -1,3 +1,7 @@
+//! Value object para identificadores UUID de usuários e entidades relacionadas.
+//!
+//! Evita espalhar conversões de UUID e validação textual pelas camadas da aplicação.
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -42,6 +46,7 @@ impl UserId {
 }
 
 impl fmt::Display for UserId {
+    /// Formata o UUID do usuário como texto e retorna o resultado da escrita no formatter.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.0)
     }
@@ -49,7 +54,7 @@ impl fmt::Display for UserId {
 
 impl FromStr for UserId {
     type Err = DomainError;
-
+    /// Valida e converte o texto em identificador UUID; retorna o ID ou `DomainError` se a entrada for inválida.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         Self::parse(value)
     }
@@ -59,11 +64,15 @@ impl FromStr for UserId {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `generates_distinct_v4_ids` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn generates_distinct_v4_ids() {
         assert_ne!(UserId::new_v4(), UserId::new_v4());
     }
 
+    /// Verifica o contrato identificado por `round_trips_through_string` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn round_trips_through_string() {
         let id = UserId::new_v4();
@@ -71,6 +80,8 @@ mod tests {
         assert_eq!(UserId::parse(&id.to_string()).expect("id válido"), id);
     }
 
+    /// Verifica o contrato identificado por `rejects_invalid_id` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_invalid_id() {
         assert!(matches!(

@@ -40,6 +40,8 @@ fn service() -> JwtTokenService {
     JwtTokenService::new(SECRET, TTL_SECS).expect("serviço válido")
 }
 
+/// Verifica o contrato identificado por `issues_and_verifies_a_token_with_all_required_claims` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn issues_and_verifies_a_token_with_all_required_claims() {
     let svc = service();
@@ -60,6 +62,8 @@ async fn issues_and_verifies_a_token_with_all_required_claims() {
     assert_eq!(svc.access_ttl_secs(), TTL_SECS);
 }
 
+/// Verifica o contrato identificado por `two_tokens_for_the_same_user_have_different_jti` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn two_tokens_for_the_same_user_have_different_jti() {
     let svc = service();
@@ -77,6 +81,8 @@ async fn two_tokens_for_the_same_user_have_different_jti() {
     );
 }
 
+/// Verifica o contrato identificado por `rejects_token_signed_with_another_secret` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn rejects_token_signed_with_another_secret() {
     let issuer_service = service();
@@ -95,6 +101,8 @@ async fn rejects_token_signed_with_another_secret() {
     assert!(matches!(error, AppError::Authentication));
 }
 
+/// Verifica o contrato identificado por `rejects_expired_token` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn rejects_expired_token() {
     let svc = service();
@@ -110,6 +118,8 @@ async fn rejects_expired_token() {
     assert!(matches!(error, AppError::Authentication));
 }
 
+/// Verifica o contrato identificado por `rejects_completely_invalid_token` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn rejects_completely_invalid_token() {
     let svc = service();
@@ -122,6 +132,8 @@ async fn rejects_completely_invalid_token() {
     assert!(matches!(error, AppError::Authentication));
 }
 
+/// Verifica o contrato identificado por `rejects_token_with_algorithm_none` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn rejects_token_with_algorithm_none() {
     // JWT com `alg: none` e sem assinatura: o clássico ataque de algoritmo.
@@ -140,6 +152,8 @@ async fn rejects_token_with_algorithm_none() {
     assert!(matches!(error, AppError::Authentication));
 }
 
+/// Verifica o contrato identificado por `rejects_zero_ttl_configuration` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn rejects_zero_ttl_configuration() {
     // `expect_err` exigiria `Debug` em JwtTokenService, que contém chaves e
@@ -160,9 +174,11 @@ fn base64_url(value: &str) -> String {
 mod base64_encode {
     /// Converte bytes em base64url sem padding (RFC 4648 §5).
     pub fn encode(input: &[u8]) -> String {
+        /// Caracteres do alfabeto URL-safe usado na codificação Base64.
         const ALPHABET: &[u8; 64] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
+        // Buffer que acumula os caracteres da saída Base64url gerada para o token.
         let mut out = String::new();
         for chunk in input.chunks(3) {
             let b0 = chunk[0] as u32;

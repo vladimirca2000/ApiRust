@@ -1,3 +1,8 @@
+//! Erros de validação e de invariantes do domínio.
+//!
+//! Os casos são independentes de transporte e persistência para que camadas
+//! externas possam traduzi-los sem acoplar as regras de negócio.
+
 use thiserror::Error;
 
 /// Violações das invariantes de domínio.
@@ -70,4 +75,16 @@ pub enum DomainError {
     /// Já existe outro registro ativo com o mesmo valor único (nome, SKU).
     #[error("valor já está em uso: {0}")]
     AlreadyInUse(String),
+
+    /// O motivo de movimentação de estoque não é conhecido.
+    #[error("motivo de estoque inválido: {0}")]
+    InvalidStockReason(String),
+
+    /// A movimentação de estoque tem variação zero e não explica nada.
+    #[error("movimentação de estoque não pode ter variação zero")]
+    EmptyStockMovement,
+
+    /// O histórico de preço exige um valor diferente do atual.
+    #[error("alteração de preço exige valor diferente do atual")]
+    UnchangedPrice,
 }

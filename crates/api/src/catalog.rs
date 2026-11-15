@@ -198,6 +198,28 @@ pub const CATALOG: &[Endpoint] = &[
     },
 ];
 
+/// Endpoints de histórico do catálogo e trilha de auditoria (Fase 8).
+pub const HISTORY: &[Endpoint] = &[
+    Endpoint {
+        method: "GET",
+        path: "/api/v1/products/{id}/stock-movements",
+        access: Access::Bearer,
+        description: "Movimentações de estoque do produto (Admin/Manager).",
+    },
+    Endpoint {
+        method: "GET",
+        path: "/api/v1/products/{id}/price-changes",
+        access: Access::Bearer,
+        description: "Alterações de preço do produto (Admin/Manager).",
+    },
+    Endpoint {
+        method: "GET",
+        path: "/api/v1/audit",
+        access: Access::Bearer,
+        description: "Trilha de auditoria: quem alterou o quê (apenas Admin).",
+    },
+];
+
 /// Endpoints auxiliares de desenvolvimento.
 pub const DEVELOPMENT: &[Endpoint] = &[
     Endpoint {
@@ -233,6 +255,10 @@ pub const GROUPS: &[Group] = &[
         endpoints: CATALOG,
     },
     Group {
+        title: "Histórico e auditoria",
+        endpoints: HISTORY,
+    },
+    Group {
         title: "Desenvolvimento",
         endpoints: DEVELOPMENT,
     },
@@ -247,6 +273,8 @@ pub fn all_endpoints() -> impl Iterator<Item = &'static Endpoint> {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `no_duplicate_method_and_path_pairs` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn no_duplicate_method_and_path_pairs() {
         let mut seen = Vec::new();
@@ -262,6 +290,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `every_path_starts_with_slash_and_has_description` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn every_path_starts_with_slash_and_has_description() {
         for endpoint in all_endpoints() {

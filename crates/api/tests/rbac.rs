@@ -4,6 +4,9 @@
 //! e **escalonamento de privilégio** (conceder-se um papel maior). Cada teste
 //! autentica um usuário real com o papel indicado e observa o status HTTP.
 
+mod common;
+
+use common::isolated_database;
 use std::net::SocketAddr;
 
 use api::AppState;
@@ -14,7 +17,7 @@ use axum::http::{Request, StatusCode, header};
 use chrono::Utc;
 use domain::{Email, Role, User, UserId};
 use http_body_util::BodyExt;
-use infrastructure::{Argon2PasswordHasher, Database, SqlxUserRepository};
+use infrastructure::{Argon2PasswordHasher, SqlxUserRepository};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -49,10 +52,7 @@ struct Env {
 
 /// Monta o ambiente com um usuário de cada papel.
 async fn env() -> Env {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    database.migrate().await.expect("migrations");
+    let database = isolated_database("teste").await;
 
     let repository = SqlxUserRepository::new(database.pool().clone());
     let hasher = Argon2PasswordHasher::new();
@@ -75,7 +75,7 @@ async fn env() -> Env {
     .await;
     let user = seed_user(&repository, &hasher, "User", "user@example.com", Role::User).await;
 
-    let state = AppState::new(false, database)
+    let state = AppState::for_tests(false, database)
         .with_jwt(SECRET, 900)
         .expect("jwt");
 
@@ -104,7 +104,7 @@ async fn seed_user(
         Utc::now(),
     )
     .expect("usuário");
-    repository.insert(&user).await.expect("inserir");
+    repository.insert(&user, None).await.expect("inserir");
 
     Seeded {
         id: user.id(),
@@ -176,6 +176,8 @@ async fn login(env: &Env, seeded: &Seeded) -> String {
         .to_owned()
 }
 
+/// Verifica o contrato identificado por `all_roles_can_read_their_own_profile` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn all_roles_can_read_their_own_profile() {
     let env = env().await;
@@ -200,6 +202,8 @@ async fn all_roles_can_read_their_own_profile() {
     }
 }
 
+/// Verifica o contrato identificado por `non_admin_cannot_list_users` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn non_admin_cannot_list_users() {
     let env = env().await;
@@ -217,6 +221,8 @@ async fn non_admin_cannot_list_users() {
     }
 }
 
+/// Verifica o contrato identificado por `admin_can_list_users` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_can_list_users() {
     let env = env().await;
@@ -229,6 +235,8 @@ async fn admin_can_list_users() {
     assert_eq!(body["items"].as_array().expect("itens").len(), 3);
 }
 
+/// Verifica o contrato identificado por `non_admin_cannot_create_users` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn non_admin_cannot_create_users() {
     let env = env().await;
@@ -258,6 +266,8 @@ async fn non_admin_cannot_create_users() {
     }
 }
 
+/// Verifica o contrato identificado por `admin_can_create_a_user` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_can_create_a_user() {
     let env = env().await;
@@ -283,6 +293,8 @@ async fn admin_can_create_a_user() {
     assert_eq!(body["status"], "active");
 }
 
+/// Verifica o contrato identificado por `creating_user_with_duplicate_email_returns_409` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn creating_user_with_duplicate_email_returns_409() {
     let env = env().await;
@@ -305,6 +317,8 @@ async fn creating_user_with_duplicate_email_returns_409() {
     assert_eq!(status, StatusCode::CONFLICT);
 }
 
+/// Verifica o contrato identificado por `creating_user_with_weak_password_returns_422` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn creating_user_with_weak_password_returns_422() {
     let env = env().await;
@@ -327,6 +341,8 @@ async fn creating_user_with_weak_password_returns_422() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// Verifica o contrato identificado por `user_cannot_read_another_users_profile_idor` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn user_cannot_read_another_users_profile_idor() {
     let env = env().await;
@@ -349,6 +365,8 @@ async fn user_cannot_read_another_users_profile_idor() {
     );
 }
 
+/// Verifica o contrato identificado por `user_cannot_update_another_users_profile_idor` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn user_cannot_update_another_users_profile_idor() {
     let env = env().await;
@@ -370,6 +388,8 @@ async fn user_cannot_update_another_users_profile_idor() {
     );
 }
 
+/// Verifica o contrato identificado por `user_can_update_own_profile` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn user_can_update_own_profile() {
     let env = env().await;
@@ -388,6 +408,8 @@ async fn user_can_update_own_profile() {
     assert_eq!(body["name"], "Nome Alterado");
 }
 
+/// Verifica o contrato identificado por `user_cannot_change_own_role_escalation` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn user_cannot_change_own_role_escalation() {
     let env = env().await;
@@ -410,6 +432,8 @@ async fn user_cannot_change_own_role_escalation() {
     );
 }
 
+/// Verifica o contrato identificado por `manager_cannot_change_roles` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn manager_cannot_change_roles() {
     let env = env().await;
@@ -431,6 +455,8 @@ async fn manager_cannot_change_roles() {
     );
 }
 
+/// Verifica o contrato identificado por `admin_can_change_another_users_role` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_can_change_another_users_role() {
     let env = env().await;
@@ -449,6 +475,8 @@ async fn admin_can_change_another_users_role() {
     assert_eq!(body["role"], "manager");
 }
 
+/// Verifica o contrato identificado por `admin_cannot_change_own_role` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_cannot_change_own_role() {
     let env = env().await;
@@ -470,6 +498,8 @@ async fn admin_cannot_change_own_role() {
     );
 }
 
+/// Verifica o contrato identificado por `admin_cannot_delete_own_account` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_cannot_delete_own_account() {
     let env = env().await;
@@ -487,6 +517,8 @@ async fn admin_cannot_delete_own_account() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// Verifica o contrato identificado por `user_cannot_delete_anyone` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn user_cannot_delete_anyone() {
     let env = env().await;
@@ -504,6 +536,8 @@ async fn user_cannot_delete_anyone() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// Verifica o contrato identificado por `admin_can_delete_another_user_and_it_disappears_from_listing` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn admin_can_delete_another_user_and_it_disappears_from_listing() {
     let env = env().await;
@@ -535,6 +569,8 @@ async fn admin_can_delete_another_user_and_it_disappears_from_listing() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Verifica o contrato identificado por `unknown_user_returns_404` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn unknown_user_returns_404() {
     let env = env().await;
@@ -553,6 +589,8 @@ async fn unknown_user_returns_404() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Verifica o contrato identificado por `malformed_id_returns_404_not_500` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn malformed_id_returns_404_not_500() {
     let env = env().await;
@@ -570,6 +608,8 @@ async fn malformed_id_returns_404_not_500() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Verifica o contrato identificado por `invalid_role_value_returns_422` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn invalid_role_value_returns_422() {
     let env = env().await;
@@ -587,6 +627,8 @@ async fn invalid_role_value_returns_422() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// Verifica o contrato identificado por `unauthenticated_requests_get_401_everywhere` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn unauthenticated_requests_get_401_everywhere() {
     let env = env().await;
@@ -611,6 +653,8 @@ async fn unauthenticated_requests_get_401_everywhere() {
     }
 }
 
+/// Verifica o contrato identificado por `demoted_admin_loses_privileges_immediately` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn demoted_admin_loses_privileges_immediately() {
     let env = env().await;

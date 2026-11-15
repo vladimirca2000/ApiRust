@@ -7,7 +7,7 @@ O plano completo de implementação está em [`docs/plano-de-implementacao.md`](
 ## Stack
 
 - **Runtime/HTTP:** Tokio + Axum
-- **Persistência:** SQLx + SQLite (migrations versionadas)
+- **Persistência:** SQLx + PostgreSQL (migrations versionadas)
 - **Autenticação:** JWT (access curto + refresh com rotação) e Argon2id
 - **Documentação:** OpenAPI via Utoipa + Swagger UI
 - **Erros:** `thiserror` + respostas `application/problem+json` (RFC 7807)
@@ -48,9 +48,9 @@ Variáveis:
 | `APP_ENV` | não | `development` | `development` ou `production` |
 | `APP_HOST` | não | `127.0.0.1` | IP de bind |
 | `APP_PORT` | não | `8080` | Porta HTTP |
-| `DATABASE_URL` | sim | — | URL do SQLite (o diretório é criado automaticamente) |
+| `DATABASE_URL` | sim | — | URL do PostgreSQL (`postgres://usuario:senha@host:porta/banco`) |
 | `RUN_MIGRATIONS` | não | `true` | Aplica as migrations embutidas no boot |
-| `REDIS_URL` | não | — | Redis para Fase 3 (use `redis://usuario:senha@127.0.0.1:6379` se houver autenticação) |
+| `REDIS_URL` | produção: sim | — | Estado compartilhado de rate limit e denylist. Sem ele em produção, o boot aborta |
 | `JWT_SECRET` | sim | — | Segredo com pelo menos 32 caracteres |
 | `JWT_ACCESS_TTL_SECS` | não | `900` | TTL do access token |
 | `ADMIN_EMAIL` | não | — | E-mail do Admin inicial (exige `ADMIN_PASSWORD`) |
@@ -58,6 +58,8 @@ Variáveis:
 | `SHUTDOWN_ON_TAB_CLOSE` | não | `false` | Dev: encerra o servidor 10s após a última aba fechar |
 | `MAX_CONCURRENT_REQUESTS` | não | `128` | Teto de requisições HTTP simultâneas; o excesso responde `503` |
 | `SHUTDOWN_DRAIN_SECS` | não | `30` | Espera das conexões em voo após o sinal de shutdown |
+| `METRICS_TOKEN` | não | — | Token de `/metrics`; sem ele a rota não é montada |
+| `TRUSTED_PROXIES` | não | — | IPs de proxy/LB separados por vírgula. Vazio = API exposta direto (`X-Forwarded-For` ignorado) |
 | `RUST_LOG` | não | `info,api=debug,tower_http=info` | Filtro de logs |
 
 Nunca versione `.env` nem use o segredo de exemplo em produção.
@@ -66,7 +68,9 @@ Nunca versione `.env` nem use o segredo de exemplo em produção.
 
 As migrations ficam em `migrations/` e são embutidas no binário. Com `RUN_MIGRATIONS=true` (padrão), são aplicadas de forma idempotente no boot. Em ambientes com passo de deploy controlado, defina `false` e aplique com `sqlx migrate run` (requer `sqlx-cli`).
 
-SQLite é configurado com foreign keys, WAL, `busy_timeout` de 5s e pool limitado a 5 conexões. Unicidade de e-mail, SKU e nome de categoria vale apenas para registros ativos (soft delete).
+O pool de PostgreSQL usa no máximo 10 conexões e `acquire_timeout` de 5 s. Unicidade de e-mail, SKU e nome de categoria vale apenas para registros ativos (índices parciais com `WHERE deleted_at IS NULL`), o que permite recriar um registro excluído. `DATABASE_SCHEMA` restringe a API a um schema próprio — útil quando o banco é compartilhado; sem ele vale o `search_path` do usuário.
+
+O diretório `data/` é resíduo da época do SQLite: nenhum código o usa e ele está no `.gitignore`. Pode ser removido.
 
 ### Primeiro Admin
 
@@ -81,7 +85,7 @@ cargo run -p api
 ```
 
 - `GET /health` — processo ativo (não consulta dependências)
-- `GET /ready` — dependências prontas (`SELECT 1` no SQLite, timeout de 2 s). Banco
+- `GET /ready` — dependências prontas (`SELECT 1` no PostgreSQL, timeout de 2 s). Banco
   indisponível responde `503 {"status":"unavailable"}` sem detalhe interno.
 - Shutdown gracioso em `Ctrl+C` (e no fechamento da aba, em desenvolvimento), com
   espera configurável das conexões em voo (`SHUTDOWN_DRAIN_SECS`).
@@ -195,6 +199,122 @@ cada atualização do SQLx.
 A revisão de segurança da Fase 7 (auth, IDOR, SQL, segredos) está em
 [`docs/checklist-seguranca.md`](docs/checklist-seguranca.md).
 
+### IP do cliente e rate limit atrás de proxy
+
+A chave do rate limit é o IP do cliente. Lendo só o peer do socket, uma API
+atrás de reverse proxy vê **um único IP** — o do proxy — e todos os clientes
+dividem a mesma cota: um cliente sozinho pode esgotar o limite de login (5/min).
+
+**Ler `X-Forwarded-For` sempre seria pior**: o cabeçalho vem do cliente e
+qualquer um forja um IP novo a cada requisição, escapando do limite.
+
+A regra adotada:
+
+| `TRUSTED_PROXIES` | Comportamento |
+|---|---|
+| vazio (padrão) | usa o peer do socket; `X-Forwarded-For` é **ignorado** |
+| preenchido | se o peer está na lista, usa o **último** salto não confiável do cabeçalho; senão, usa o peer |
+
+`TRUSTED_PROXIES` aceita IPs separados por vírgula (`10.0.0.2,10.0.0.3`); valor
+inválido aborta o boot, porque um erro de digitação faria o proxy não ser
+reconhecido — exatamente o problema que a variável resolve.
+
+Escolha uma das linhas e registre no runbook:
+
+- **API exposta direto ao cliente**: não defina `TRUSTED_PROXIES`.
+- **Atrás de proxy/LB**: defina `TRUSTED_PROXIES` com os IPs do proxy.
+
+### Estado distribuído (Redis)
+Com mais de uma réplica, o estado **precisa** sair do processo:
+
+| Item | Sem Redis | Com Redis |
+|---|---|---|
+| Rate limit | contador por réplica; o limite efetivo é `limite × réplicas` | contador único (`INCR` + `PEXPIRE` em script Lua) |
+| Logout | access token continua válido até expirar | `jti` entra na denylist até o `exp` |
+
+Em produção o boot **aborta** sem `REDIS_URL`: subir com o estado por instância
+seria um controle de segurança que não controla nada. Em desenvolvimento, sem
+Redis, tudo funciona em memória e o log avisa explicitamente.
+
+Os testes de integração do Redis ficam em
+`crates/infrastructure/tests/redis.rs` e exigem `REDIS_URL`; quando o servidor
+não responde, eles **não passam em silêncio** — imprimem `SKIP` com o motivo.
+
+### Histórico e auditoria
+
+```text
+GET /api/v1/products/{id}/stock-movements   Admin/Manager
+GET /api/v1/products/{id}/price-changes     Admin/Manager
+GET /api/v1/audit                           Admin
+```
+
+- `stock` e `price_cents` eram sobrescritos: um saldo que caía não dizia se foi
+  venda, perda ou correção. Cada alteração agora grava uma linha em
+  `stock_movements` (com `delta` e `reason`) ou `price_changes` (com valor
+  anterior e novo).
+- Produto e histórico são gravados **na mesma transação**. Se o histórico falhar,
+  o produto não muda — um saldo sem explicação é pior que um erro.
+- `audit_log` registra `actor_id`, ação, entidade e snapshots `before`/`after`.
+  Nunca inclui `password_hash`.
+- Mudança sem efeito (mesmo preço, mesmo estoque) **não** gera linha: histórico
+  com ruído não serve para relatório.
+
+### Métricas
+
+Com `METRICS_TOKEN` definido, `GET /metrics` publica o formato texto do
+Prometheus (`api_http_requests_total`, `api_http_request_duration_seconds`,
+`api_http_in_flight`, `api_rate_limited_total`). O token vai no cabeçalho
+`x-metrics-token`.
+
+Sem `METRICS_TOKEN`, a rota **não existe** e responde `404` — métricas abertas
+entregam o mapa de rotas e a taxa de erro para qualquer visitante. O rótulo
+`route` é normalizado (`/api/v1/users/{id}`), para não criar uma série temporal
+por usuário.
+
+### PostgreSQL
+
+O projeto usa PostgreSQL (testado com 17.12). Diferenças em relação ao SQLite que
+moldaram o código:
+
+| Tema | SQLite | PostgreSQL |
+|---|---|---|
+| Placeholder | `?` | `$1, $2…` |
+| Inteiro de 64 bits | `INTEGER` já é 64 bits | `INTEGER` é `INT4`; usar `BIGINT` |
+| Erro de unicidade | texto `UNIQUE constraint failed: users.email` | `SQLSTATE 23505` + nome da constraint |
+| Isolamento de teste | `:memory:` por processo | schema próprio por teste |
+
+Os três primeiros explicam mudanças reais no adaptador:
+
+- **227 placeholders** foram convertidos. Em SQL dinâmico (`products`, `audit`) a
+  numeração é calculada: os filtros ocupam `$1..$n` e `LIMIT`/`OFFSET` continuam
+  a partir de `n+1`. Placeholder repetido ou fora de ordem é erro de execução no
+  PostgreSQL, então a contagem precisa casar exatamente com os `bind`.
+- **`BIGINT` em `price_cents`, `stock`, `delta`, `old_cents`, `new_cents`**: com
+  `INTEGER` (`INT4`), a leitura de um `i64` falha com `mismatched types`. Isso
+  aparecia como `500` na listagem de produtos.
+- **Erros por `SQLSTATE` + nome da constraint** (`pg_errors.rs`): comparar o texto
+  da mensagem seria frágil, porque o PostgreSQL traduz a mensagem conforme o
+  locale do servidor.
+
+**Schema dedicado.** O banco pode ser compartilhado com outras aplicações, então
+`DATABASE_SCHEMA` limita a API a um schema próprio (`apirust_dev` no `.env`
+local). Sem a variável, vale o `search_path` do usuário. O pool fixa o
+`search_path` nas **opções de conexão** — um `SET` avulso valeria só para uma
+conexão do pool.
+
+**Testes.** Cada teste cria um schema `t_<nome>_<pid>_<nanos>_<seq>` e aplica as
+migrations nele. A suíte roda em paralelo contra o mesmo servidor sem que um
+teste veja as linhas do outro. A limpeza remove schemas cujo PID já morreu — a
+varredura por PID evita apagar o schema de uma execução concorrente.
+
+```bash
+export TEST_DATABASE_URL="postgres://usuario:senha@host:5432/banco"
+cargo test --workspace
+```
+
+Sem `TEST_DATABASE_URL` (ou `DATABASE_URL`), os testes de integração **falham com
+mensagem explícita** em vez de passar em silêncio.
+
 ### Documentação obrigatória
 
 Todo item de código — módulo, struct, enum, trait, campo, constante, função (inclusive
@@ -209,14 +329,14 @@ elas vale comentário `//` quando o nome não bastar.
 ## Status
 
 - [x] Fase 0 — workspace, configuração, logging, health/ready, CI
-- [x] Fase 1 — SQLite, migrations, constraints, pool e readiness com banco
+- [x] Fase 1 — banco, migrations, constraints, pool e readiness (SQLite na época; migrado para PostgreSQL na Fase 8)
 - [x] Fase 2 — domínio de usuários, hashing Argon2id e primeiro Admin
 - [x] Fase 3 — login, JWT, refresh, logout
 - [x] Fase 4 — RBAC e usuários
 - [x] Fase 5 — categorias e produtos
 - [x] Fase 6 — OpenAPI e erros padronizados
 - [x] Fase 7 — operação e endurecimento
-- [ ] Fase 8 — dívidas técnicas e itens fora do escopo (ver [`docs/plano-de-implementacao.md`](docs/plano-de-implementacao.md#fase-8--dívidas-técnicas-e-itens-fora-do-escopo))
+- [x] Fase 8 — dívidas técnicas: Redis distribuído, auditoria, histórico e métricas
 
 ## Licença
 

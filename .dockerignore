@@ -1,0 +1,26 @@
+# Artefatos locais que nunca devem ir para o contexto de build.
+target/
+target-real/
+data/
+.env
+.env.*
+!.env.example
+
+# Banco e artefatos do SQLite.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Ferramentas de IA e configuração de editor (não afetam o binário).
+.agents/
+.cursor/
+.claude/
+.git/
+.github/
+.vscode/
+docs/
+
+# Testes não entram na imagem; o build de release não os usa.
+crates/*/tests/

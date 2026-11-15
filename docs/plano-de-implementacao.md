@@ -20,7 +20,7 @@ Fora do escopo inicial (avaliar depois): Redis obrigatório, métricas Prometheu
 | Camada | Crates |
 |---|---|
 | Runtime/HTTP | `tokio`, `axum`, `tower`, `tower-http` |
-| Persistência | `sqlx` (runtime-tokio, sqlite, macros, migrate) |
+| Persistência | `sqlx` (runtime-tokio, postgres, migrate) |
 | Auth | `jsonwebtoken`, `argon2`, `rand`/`password-hash` |
 | Domínio | `uuid`, `chrono` (UTC), `thiserror`, `serde` |
 | Validação | `validator` ou validação manual na borda |
@@ -404,61 +404,273 @@ Servidor real (0.0.0.0:8080, banco data/api.db):
 - Segredos versionados são regressão coberta por `crates/api/tests/secrets.rs`
   (`.gitignore`, `.env.example` e `git ls-files .env`).
 
-### Fase 8 — Dívidas técnicas e itens fora do escopo
+### Fase 8 — Dívidas técnicas e itens fora do escopo (concluída)
 
-Itens conscientemente adiados nas fases anteriores. Nenhum bloqueia o MVP, mas todos
-foram registrados para não virarem esquecimento. Ordenados por risco.
+**Inclui a migração de SQLite para PostgreSQL**, solicitada durante a fase. Ver
+[Migração para PostgreSQL](#fase-8--migração-para-postgresql).
+
+Itens conscientemente adiados nas fases anteriores. Ordenados por risco.
 
 #### 8.1 Estado distribuído (risco alto em múltiplas réplicas)
 
-- [ ] **Rate limit no Redis.** Hoje é um `HashMap` em memória por processo
-      (`api/src/rate_limit.rs`): some no restart e cada réplica conta em separado, o
-      que multiplica o limite efetivo pelo número de instâncias. Mover para Redis
-      com janela deslizante exige `INCR` + `EXPIRE` atômicos.
-- [ ] **Revogação de access token distribuída.** Hoje o access token é stateless: vale
-      até expirar. Um logout não o invalida, e um usuário desativado perde acesso
-      apenas porque `resolve_actor` relê o banco (custo por requisição). Uma
-      denylist de `jti` em Redis resolveria, ao preço de uma consulta por request.
-- [ ] **Rate limit nas rotas de usuários e catálogo.** Só `login` e `refresh` têm
-      limite hoje. `GET /api/v1/products` sem limite é vetor de scraping.
+- [x] **Rate limit no Redis.** `infrastructure/src/redis_state.rs` executa
+      `INCR` + `PEXPIRE` no mesmo script Lua: dois comandos separados deixariam
+      a chave sem TTL se a conexão caísse no meio, bloqueando o IP para sempre.
+      A porta `RateLimitStore` troca Redis/memória sem tocar nos casos de uso.
+- [x] **Revogação de access token distribuída.** `AccessTokenDenylist` grava o
+      `jti` com `SET ... EXAT <exp>`, então a entrada expira junto com o token e
+      a denylist não cresce sem limite. O logout revoga o access token corrente,
+      e o extractor consulta a denylist **falhando fechado** quando ela está fora.
+- [x] **Rate limit nas rotas de usuários e catálogo.** Middleware
+      `read_limit::middleware` no grupo autenticado: 300 req/min por IP + rota
+      normalizada. Antes, `GET /api/v1/products` era scraping gratuito.
 
 #### 8.2 Auditoria e rastreabilidade
 
-- [ ] **Trilha de auditoria.** Não há registro de *quem* alterou *qual* usuário ou
-      produto, nem quando. Uma tabela `audit_log` (`actor_id`, `action`, `entity`,
-      `entity_id`, `before`, `after`, `at`) fecha isso. Sem ela, um incidente de
-      privilégio é indetectável depois do fato.
-- [ ] **`instance` no RFC 7807.** A resposta de erro inclui `type`, `title`, `status`
-      e `detail`, mas não `instance` (URI da ocorrência). Preencher com o request ID
-      liga o erro ao log correspondente.
+- [x] **Trilha de auditoria.** `audit_log` (`actor_id`, `action`, `entity`,
+      `entity_id`, `before`, `after`, `at`) escrita pelos casos de uso de
+      usuários, categorias e produtos; consultável em `GET /api/v1/audit`
+      (Admin). FK em `actor_id` impede autor fantasma e `CHECK` em
+      `entity`/`action` é a segunda barreira.
+- [x] **`instance` no RFC 7807.** Entregue na Fase 6 (request ID no corpo).
 
 #### 8.3 Modelo de dados que perdeu histórico
 
-- [ ] **Histórico de movimentação de estoque.** Hoje `stock` é sobrescrito: não há
-      como saber se o saldo caiu por venda, perda ou correção. Uma tabela
-      `stock_movements` (`product_id`, `delta`, `reason`, `actor_id`, `at`) é
-      pré-requisito para qualquer relatório confiável.
-- [ ] **Histórico de preço.** `price_cents` também é sobrescrito. Sem histórico não
-      há como responder "por quanto vendíamos em março".
-- [ ] **Transações explícitas onde houver múltiplas gravações.** As operações atuais
-      tocam uma linha e a atomicidade do comando basta. Isso deixa de valer assim que
-      existir movimentação de estoque (produto + movimento) ou transferência de
-      produtos entre categorias.
+- [x] **Histórico de movimentação de estoque.** `stock_movements` com `delta` e
+      `reason` (`initial`, `correction`, `sale`, `loss`, `restock`). Delta zero é
+      recusado no domínio e pelo `CHECK`.
+- [x] **Histórico de preço.** `price_changes` com `old_cents`/`new_cents`; valor
+      igual ao atual é recusado — histórico sem mudança é ruído.
+- [x] **Transações explícitas onde houver múltiplas gravações.**
+      `insert_product`/`update_product` gravam produto **e** histórico na mesma
+      transação. Teste de rollback prova que SKU duplicado não deixa movimento
+      órfão.
 
 #### 8.4 Plataforma e operação
 
-- [ ] **Redis obrigatório em produção**, em vez de opcional. Hoje `REDIS_URL` é
-      apenas registrado no boot e não é usado por nenhuma feature.
-- [ ] **Métricas Prometheus** em `/metrics`, com controle de acesso.
-- [ ] **Dockerfile multi-stage** e `docker-compose` com Redis local.
-- [x] **`cargo deny`** além do `cargo audit`, cobrindo licenças e duplicidade de
-      versões — entregue na Fase 7 (`deny.toml` + job no CI).
-- [ ] **Multi-tenancy**, caso o produto passe a atender mais de um cliente.
+- [x] **Redis obrigatório em produção.** O boot aborta sem `REDIS_URL` quando
+      `APP_ENV=production`; em desenvolvimento avisa e usa memória.
+- [x] **Métricas Prometheus** em `/metrics`, protegidas por `METRICS_TOKEN`
+      (cabeçalho `x-metrics-token`). Sem token, a rota não é montada (`404`).
+      Rótulo `route` normalizado (`/api/v1/users/{id}`) evita explosão de
+      cardinalidade.
+- [x] **Dockerfile multi-stage** e **`docker-compose`** com Redis local
+      (`Dockerfile`, `docker-compose.yml`, `.dockerignore`). Imagem roda como
+      usuário sem privilégios e usa `tini` para repassar `SIGTERM`.
+- [x] **`cargo deny`** além do `cargo audit` — entregue na Fase 7.
+- [ ] **Multi-tenancy.** Fora do escopo: o produto atende um único cliente.
+      Mudar isso é uma fase própria (isolamento toca schema, autorização e todas
+      as consultas).
 
-**Aceite:** cada item entra como checklist próprio, com teste de regressão quando for
-código. Itens de estado distribuído (8.1) devem ser resolvidos antes de qualquer
-deploy com mais de uma réplica.
+**Aceite: todos os itens de 8.1 foram verificados contra o Redis real**
+(`192.168.2.200:6379`). Evidência em
+[Verificação do Redis distribuído](#verificação-do-redis-distribuído).
 
+**Evidência de verificação:**
+
+```text
+cargo fmt --all --check                               → ok
+cargo clippy --workspace --all-targets -- -D warnings → ok
+cargo test --workspace                                → 324 testes, 0 falhas
+RUSTDOCFLAGS=-Dwarnings cargo doc --workspace          → ok
+scripts/check-local-docs.sh                           → ok
+cargo audit / cargo deny check                        → advisories/bans/licenses/sources ok
+
+Novos testes da fase:
+  domain/src/history.rs                               → 5 (motivos, delta zero, preço igual)
+  infrastructure/tests/history_audit.rs               → 11 (atomicidade, rollback, ordem)
+  infrastructure/tests/redis.rs                       → 5 contra Redis real (0 SKIP)
+  api/tests/fase8.rs                                  → 11 (histórico, auditoria, logout, métricas)
+  api/tests/config_fase8.rs                           → 6 (config de Redis e métricas)
+  api/src/metrics.rs (unitários)                      → 4 (normalização de rota, token, encoder)
+
+Servidor real (0.0.0.0:8080, banco data/api.db, **com Redis**):
+  GET  /health                       → 200
+  GET  /ready                        → 200
+  GET  /metrics (sem token)          → 404
+  GET  /metrics (com token)          → 200 text/plain, api_http_requests_total
+  POST /api/v1/auth/login            → 200
+  POST /api/v1/auth/login ×6         → 401,401,401,401,401,429 (limite no Redis)
+  POST /api/v1/categories            → 201
+  POST /api/v1/products (stock 10)   → 201
+  PATCH /api/v1/products/{id}        → 200 (stock 4, price 12000)
+  GET  .../stock-movements           → 200: delta -6 "correction", delta 10 "initial"
+  GET  .../price-changes             → 200: 9900 → 12000
+  GET  /api/v1/audit?entity=product  → 200: "create" e "update", com actor_id
+  GET  /api/v1/products ×3           → 200,200,200 (contador no Redis: 3, TTL 60 s)
+  logout com Bearer                  → 204; jti na denylist com TTL 899 s
+  GET  /api/v1/users/me (após)       → 401 (access revogado via Redis)
+  GET  /api/v1/products (sem token)  → 401
+  /swagger-ui                        → 303
+  log: "Redis conectado: rate limit e revogação distribuídos ativos"
+```
+
+#### Verificação do Redis distribuído
+
+Executada contra o Redis real de `REDIS_URL` (`redis://admin:***@192.168.2.200:6379`).
+
+**Testes de integração** — `crates/infrastructure/tests/redis.rs`:
+
+```text
+REDIS_URL=<do .env> cargo test -p infrastructure --test redis -- --nocapture
+  rate_limit_counts_and_blocks_after_the_limit ... ok
+  rate_limit_is_shared_across_connections      ... ok
+  denylist_revokes_and_expires                 ... ok
+  denylist_entry_expires_with_the_token        ... ok
+  ping_reports_healthy_connection              ... ok
+  test result: ok. 5 passed; 0 failed   (0.08s, nenhum SKIP)
+```
+
+**Controle negativo** (porta fechada, `redis://127.0.0.1:6399`): cada teste
+imprime `SKIP: não foi possível conectar ao Redis (conexão não completou em 5 s)`.
+Isso prova que a execução acima foi real, e não um skip silencioso.
+
+**Rate limit de login pela API** (`POST /api/v1/auth/login`, IP 127.0.0.1):
+
+```text
+tentativa 1..5 → 401   (credencial inválida, contabilizada)
+tentativa 6    → 429   (limite de 5/min atingido)
+tentativa 7    → 429
+```
+
+Chave observada no Redis:
+
+```text
+ratelimit:login:127.0.0.1   contador=6   TTL≈59876 ms
+```
+
+O contador é a **única** fonte de verdade: reiniciar a API não reabre a janela.
+
+**Logout distribuído** (`POST /api/v1/auth/logout` com `Authorization`):
+
+```text
+GET /api/v1/users/me  antes   → 200
+POST /auth/logout             → 204
+GET /api/v1/users/me  depois  → 401
+```
+
+Chave criada no Redis, com TTL igual ao `exp` do token (900 s de TTL
+configurado, observados 899 s):
+
+```text
+denylist:jti:9c262055-16f7-4ebe-9fc8-ce3ce4c83a3d   EXISTS=1   TTL=899 s
+```
+
+**Rate limit de leitura** (`GET /api/v1/products`, rotas autenticadas):
+
+```text
+3 requisições → 200, 200, 200
+ratelimit:read:/api/v1/products:127.0.0.1   contador=3   TTL=60 s
+```
+
+**Log de boot** com Redis presente:
+
+```text
+INFO api: migrations aplicadas
+INFO api: Redis conectado: rate limit e revogação distribuídos ativos
+INFO api: métricas Prometheus habilitadas em /metrics
+INFO api: servidor iniciado address=0.0.0.0:8080 max_concurrent=128 drain_secs=30
+```
+
+#### Correção encontrada durante a verificação
+
+O teste de conexão sem Redis **travava indefinidamente**: a configuração padrão
+do `ConnectionManager` não tem timeout de conexão nem de resposta, e o laço
+interno de retentativa pode demorar bem mais que o esperado. Consequência real
+em produção: um Redis que aceita TCP e não responde deixaria o **boot
+pendurado**, sem log de erro.
+
+Corrigido em `infrastructure/src/redis_state.rs` com três limites:
+
+| Limite | Valor | Motivo |
+|---|---|---|
+| `CONNECT_TIMEOUT` | 2 s | handshake TCP não pode pendurar o boot |
+| `RESPONSE_TIMEOUT` | 2 s | Redis lento não segura a requisição HTTP |
+| `TOTAL_CONNECT_BUDGET` | 5 s | orçamento externo (`tokio::time::timeout`) sobre as retentativas |
+
+Depois da correção, o cenário sem Redis falha em 5 s com mensagem clara, em vez
+de travar. É a diferença entre "o Redis caiu e a API não sobe" e "a API não sobe
+e ninguém sabe por quê".
+
+**Decisões da fase:**
+
+- Rate limit usa janela **fixa** com `INCR`+`PEXPIRE` atômico, e não janela
+  deslizante com sorted set. A janela fixa permite um pico de até 2× o limite na
+  virada; em troca, custa uma chave e um comando por tentativa. Para conter força
+  bruta, o pior caso de 2× é aceitável; para cobrança por uso, não seria.
+- Denylist usa `EXAT` (expiração absoluta) e não TTL relativo: o `exp` do JWT é
+  absoluto, e um TTL relativo renovaria a vida da entrada a cada consulta.
+- Denylist indisponível = **recusa** (`401` no extractor, `429` no rate limit).
+  Aceitar sem verificar reabriria exatamente o buraco que a denylist fecha.
+- Histórico e produto compartilham a transação. Um saldo alterado sem linha de
+  histórico é pior que uma requisição que falha, porque o erro é silencioso.
+- Auditoria nunca guarda `password_hash`: a trilha é legível por Admin e não deve
+  virar um segundo caminho para material de autenticação.
+- `/metrics` sem token responde `404`, não `401`/`403`: negar com um status que
+  confirma a existência da rota entrega uma pista de reconhecimento.
+
+
+### Fase 8 — Migração para PostgreSQL
+
+Solicitada durante a fase: trocar SQLite por PostgreSQL (`192.168.2.200`, porta
+**5432** — a 5435 informada está fechada), com PostgreSQL como único backend e
+isolamento de teste por schema.
+
+O que mudou no código:
+
+| Item | Antes | Depois |
+|---|---|---|
+| Feature do `sqlx` | `sqlite` | `postgres` |
+| Pool | `SqlitePool` | `PgPool` com `search_path` por schema |
+| Placeholders | 227 ocorrências de `?` | `$1..$n` (dinâmico em `products`/`audit`) |
+| `price_cents`, `stock`, `delta`, `*_cents` | `INTEGER` | `BIGINT` |
+| Erro de unicidade | texto `users.email` | `SQLSTATE 23505` + nome da constraint |
+| Teste | `:memory:` por processo | schema descartável por teste |
+
+**Bugs encontrados durante a migração** (nenhum seria pego só compilando):
+
+1. **`INTEGER` é `INT4` no PostgreSQL.** Um `SELECT` de `price_cents` em `i64`
+   falhava com `mismatched types`, o que virava `500` na listagem de produtos.
+   Corrigido trocando as colunas para `BIGINT`.
+2. **Placeholders multi-linha reiniciavam a numeração.** A conversão mecânica
+   gerou `updated_at = $1, deleted_at = $2 WHERE id = $3` num `UPDATE` de seis
+   campos; o PostgreSQL recusa placeholder repetido. Detecção: auditoria que
+   valida, para cada literal SQL, se os `$n` formam `1..N` sem repetição.
+3. **`ConnectionManager` sem timeout travava o boot.** Testado de propósito com
+   Redis inacessível: a chamada não retornava e o teste pendurava. Corrigido com
+   `CONNECT_TIMEOUT` (2 s), `RESPONSE_TIMEOUT` (2 s) e um orçamento externo de
+   5 s via `tokio::time::timeout`.
+4. **Schemas de teste vazavam.** 121 schemas órfãos acumulados no servidor. A
+   limpeza por `Drop` não servia (o `Database` é movido para o `AppState` dentro
+   de uma função auxiliar, e a guarda morria antes do teste usar o banco).
+   Solução: varredura que remove schemas cujo PID dono já não existe.
+
+**Evidência:**
+
+```text
+cargo test --workspace (TEST_DATABASE_URL=<postgres>)   → 346 testes, 0 falhas
+cargo clippy --workspace --all-targets -- -D warnings    → ok
+RUSTDOCFLAGS=-Dwarnings cargo doc --workspace            → ok
+scripts/check-local-docs.sh                              → ok
+cargo deny check                  → advisories/bans/licenses/sources ok
+
+Servidor real (0.0.0.0:8080, PostgreSQL + schema apirust_dev + Redis):
+  GET  /health                        → 200
+  GET  /ready                         → 200
+  POST /api/v1/auth/login             → 200 (296 chars de token)
+  POST /api/v1/categories             → 201
+  POST /api/v1/products (stock 10)    → 201
+  PATCH /api/v1/products/{id}         → 200 (stock 4, price 12000)
+  GET  .../stock-movements            → 200: delta -6 "correction", delta 10 "initial"
+  GET  /api/v1/audit?entity=product   → 200: create + update, com actor_id
+  GET  /api/v1/products?category_id=… → 200: total 1 (antes: 500)
+  POST /auth/logout                   → 204; depois: /users/me → 401
+  log: "usando schema dedicado do PostgreSQL schema=apirust_dev"
+  log: "Redis conectado: rate limit e revogação distribuídos ativos"
+
+Banco: schema apirust_dev com 8 tabelas (_sqlx_migrations + 7 do domínio),
+       1 usuário, 2 movimentações; schema public intacto (0 tabelas).
+```
 
 ## 5. Estratégia de testes
 
@@ -504,7 +716,7 @@ cargo audit
 | Política de senha | 12–128 caracteres com minúscula, maiúscula, número e símbolo | Validada no domínio e no boot do Admin |
 | Exclusão | Soft delete (`deleted_at`) desde o início | Todas as consultas filtram `deleted_at IS NULL`; unicidade via índice parcial |
 | Migrations | Automáticas no boot por padrão (`RUN_MIGRATIONS=true`) | `false` delega ao deploy (`sqlx migrate run`) |
-| Escopo | Fases 0–7 entregues; Fase 8 para dívidas | — |
+| Escopo | Fases 0–8 entregues; multi-tenancy permanece fora do escopo | — |
 
 ### Ambiente Redis (observação)
 

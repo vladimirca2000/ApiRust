@@ -1,3 +1,8 @@
+//! Value object de e-mail com normalização e validação de formato.
+//!
+//! Mantém caixa e espaços normalizados antes que o endereço participe das
+//! regras de unicidade ou autenticação.
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -42,12 +47,14 @@ impl Email {
 }
 
 impl fmt::Display for Email {
+    /// Formata o e-mail normalizado como texto e retorna o resultado da escrita no formatter.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
 impl AsRef<str> for Email {
+    /// Expõe o e-mail normalizado como `&str` sem copiar a string.
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -55,7 +62,7 @@ impl AsRef<str> for Email {
 
 impl FromStr for Email {
     type Err = DomainError;
-
+    /// Valida e normaliza o texto recebido como e-mail; retorna o value object ou `DomainError` se o formato for inválido.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         Self::parse(value)
     }
@@ -191,6 +198,8 @@ fn validate_domain(domain: &str) -> Result<(), DomainError> {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `normalizes_case_and_whitespace` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn normalizes_case_and_whitespace() {
         let email = Email::parse("  Admin@Example.COM  ").expect("e-mail válido");
@@ -199,6 +208,8 @@ mod tests {
         assert_eq!(email.to_string(), "admin@example.com");
     }
 
+    /// Verifica o contrato identificado por `accepts_addresses_with_common_symbols` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_addresses_with_common_symbols() {
         for value in [
@@ -210,6 +221,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `rejects_missing_at_sign` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_missing_at_sign() {
         assert!(matches!(
@@ -218,32 +231,44 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `rejects_multiple_at_signs` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_multiple_at_signs() {
         assert!(Email::parse("user@example@com").is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_empty_local_part` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_empty_local_part() {
         assert!(Email::parse("@example.com").is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_empty_domain` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_empty_domain() {
         assert!(Email::parse("user@").is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_domain_without_dot` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_domain_without_dot() {
         assert!(Email::parse("user@localhost").is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_invalid_characters` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_invalid_characters() {
         assert!(Email::parse("user name@example.com").is_err());
         assert!(Email::parse("user@exa_mple.com").is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_leading_and_trailing_dots` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_leading_and_trailing_dots() {
         assert!(Email::parse(".user@example.com").is_err());
@@ -252,6 +277,8 @@ mod tests {
         assert!(Email::parse("user@example.com.").is_err());
     }
 
+    /// Verifica o contrato identificado por `rejects_too_long_addresses` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_too_long_addresses() {
         let local = "a".repeat(MAX_LOCAL_PART_LEN + 1);
@@ -259,6 +286,8 @@ mod tests {
         assert!(Email::parse(format!("{local}@example.com")).is_err());
     }
 
+    /// Verifica o contrato identificado por `parses_from_str` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn parses_from_str() {
         let email: Email = "user@example.com".parse().expect("e-mail válido");

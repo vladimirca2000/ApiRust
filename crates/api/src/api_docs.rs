@@ -48,6 +48,9 @@ use crate::AppState;
         crate::catalog_routes::get_product_doc,
         crate::catalog_routes::update_product_doc,
         crate::catalog_routes::delete_product_doc,
+        crate::history_routes::stock_movements_doc,
+        crate::history_routes::price_changes_doc,
+        crate::history_routes::audit_doc,
     ),
     components(schemas(
         crate::problem::ProblemDetails,
@@ -70,18 +73,29 @@ use crate::AppState;
         crate::catalog_routes::ProductListResponse,
         crate::catalog_routes::CreateProductRequest,
         crate::catalog_routes::UpdateProductRequest,
+        crate::history_routes::StockMovementResponse,
+        crate::history_routes::StockMovementListResponse,
+        crate::history_routes::PriceChangeResponse,
+        crate::history_routes::PriceChangeListResponse,
+        crate::history_routes::AuditEntryResponse,
+        crate::history_routes::AuditListResponse,
+        crate::history_routes::PageQuery,
+        crate::history_routes::AuditQuery,
     )),
     tags(
         (name = "Operação", description = "Health e readiness"),
         (name = "Autenticação", description = "Login, refresh, logout e perfil"),
         (name = "Usuários", description = "CRUD de usuários e papéis"),
         (name = "Catálogo", description = "Categorias e produtos"),
+        (name = "Histórico", description = "Movimentação de estoque e mudanças de preço"),
+        (name = "Auditoria", description = "Trilha de quem alterou o quê"),
     ),
     servers(
         (url = "/", description = "Este servidor")
     ),
     modifiers(&BearerSecurityAddon)
 )]
+/// Especificação OpenAPI completa da API, incluindo rotas, esquemas e segurança Bearer.
 pub struct ApiDoc;
 
 /// Adiciona o esquema Bearer usado pelo JWT à especificação OpenAPI.
@@ -131,6 +145,8 @@ pub fn routes() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `spec_lists_every_catalogued_path` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn spec_lists_every_catalogued_path() {
         let spec = ApiDoc::openapi();
@@ -151,6 +167,8 @@ mod tests {
         }
     }
 
+    /// Verifica o contrato identificado por `spec_declares_the_problem_details_schema` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn spec_declares_the_problem_details_schema() {
         let spec = ApiDoc::openapi();
@@ -162,6 +180,8 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `spec_has_the_expected_title` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn spec_has_the_expected_title() {
         let spec = ApiDoc::openapi();
@@ -169,6 +189,8 @@ mod tests {
         assert_eq!(spec.info.title, "ApiRust");
     }
 
+    /// Verifica o contrato identificado por `spec_declares_bearer_jwt_authorization` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn spec_declares_bearer_jwt_authorization() {
         let spec = ApiDoc::openapi();

@@ -135,6 +135,10 @@ pub fn to_app_error(error: &AppError) -> Response {
         ),
         // Regra de negócio que impede a operação (categoria com produtos): 409.
         AppError::Conflict(message) => (StatusCode::CONFLICT, "conflict", message.clone()),
+        // Paginação fora do intervalo aceito: 400, apontando o parâmetro.
+        AppError::InvalidPagination(message) => {
+            (StatusCode::BAD_REQUEST, "invalid_request", message.clone())
+        }
         AppError::Infrastructure(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",

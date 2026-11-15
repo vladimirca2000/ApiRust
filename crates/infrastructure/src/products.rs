@@ -8,7 +8,7 @@ use application::{AppError, ProductFilter, ProductRepository, ProductSort};
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use domain::{EntityStatus, Money, Product, Sku, UserId};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 /// Colunas selecionadas em todas as consultas de produto.
 const COLUMNS: &str = "id, name, sku, description, price_cents, stock, category_id, status, \
@@ -18,32 +18,41 @@ const COLUMNS: &str = "id, name, sku, description, price_cents, stock, category_
 #[derive(Debug, Clone)]
 pub struct SqlxProductRepository {
     /// Pool usado em todas as operações.
-    pool: SqlitePool,
+    pool: PgPool,
 }
 
 impl SqlxProductRepository {
     /// Monta o repositório sobre um pool já configurado.
     #[must_use]
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
     /// Monta a cláusula `WHERE` e os valores correspondentes aos filtros.
     ///
-    /// Devolve a condição já com `?` para cada filtro ativo, na mesma ordem dos
+    /// Devolve a condição já com `$n` para cada filtro ativo, na mesma ordem dos
     /// valores. Nunca interpola dado do cliente no SQL.
-    fn build_where(filter: &ProductFilter) -> (String, Vec<String>) {
+    ///
+    /// A numeração começa em `$start` porque o `LIMIT`/`OFFSET` da consulta usa
+    /// os números seguintes. No PostgreSQL, placeholder fora de ordem (ou
+    /// repetido) é erro de execução, então a contagem precisa acompanhar
+    /// exatamente os `bind` feitos pelo chamador.
+    fn build_where(filter: &ProductFilter, start: usize) -> (String, Vec<String>) {
         let mut conditions = vec!["deleted_at IS NULL".to_owned()];
         let mut values = Vec::new();
 
+        // Próximo número de placeholder disponível.
+        let mut next = start;
+
         if let Some(category_id) = filter.category_id {
-            conditions.push("category_id = ?".to_owned());
+            conditions.push(format!("category_id = ${next}"));
             values.push(category_id.to_string());
+            next += 1;
         }
         if let Some(name) = &filter.name_contains {
-            // `LOWER(...) LIKE LOWER(?)` dá busca case-insensitive sem depender
-            // de collation configurada no SQLite.
-            conditions.push("LOWER(name) LIKE LOWER(?)".to_owned());
+            // `LOWER(...) LIKE LOWER($n)` dá busca case-insensitive sem depender
+            // de collation configurada no banco.
+            conditions.push(format!("LOWER(name) LIKE LOWER(${next})"));
             values.push(format!("%{}%", escape_like(name)));
         }
         if let Some(only_active) = filter.only_active {
@@ -58,8 +67,9 @@ impl SqlxProductRepository {
 
 #[async_trait]
 impl ProductRepository for SqlxProductRepository {
+    /// Busca o registro pelo identificador e retorna `Some` quando encontrado, `None` quando ausente ou erro de persistência.
     async fn find_by_id(&self, id: UserId) -> Result<Option<Product>, AppError> {
-        let sql = format!("SELECT {COLUMNS} FROM products WHERE id = ? AND deleted_at IS NULL");
+        let sql = format!("SELECT {COLUMNS} FROM products WHERE id = $1 AND deleted_at IS NULL");
 
         let row = sqlx::query_as::<_, ProductRow>(&sql)
             .bind(id.to_string())
@@ -69,9 +79,9 @@ impl ProductRepository for SqlxProductRepository {
 
         row.map(ProductRow::into_product).transpose()
     }
-
+    /// Busca o produto pelo SKU e retorna `Some` quando encontrado, `None` quando ausente ou erro de persistência.
     async fn find_by_sku(&self, sku: &Sku) -> Result<Option<Product>, AppError> {
-        let sql = format!("SELECT {COLUMNS} FROM products WHERE sku = ? AND deleted_at IS NULL");
+        let sql = format!("SELECT {COLUMNS} FROM products WHERE sku = $1 AND deleted_at IS NULL");
 
         let row = sqlx::query_as::<_, ProductRow>(&sql)
             .bind(sku.as_str())
@@ -81,12 +91,12 @@ impl ProductRepository for SqlxProductRepository {
 
         row.map(ProductRow::into_product).transpose()
     }
-
+    /// Persiste o novo registro e retorna sucesso após a gravação; violações de unicidade, integridade ou falhas SQL são convertidas em erro da aplicação.
     async fn insert(&self, product: &Product) -> Result<(), AppError> {
         let sql = "INSERT INTO products \
                    (id, name, sku, description, price_cents, stock, category_id, status, \
                     created_at, updated_at, deleted_at) \
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)";
 
         let result = sqlx::query(sql)
             .bind(product.id().to_string())
@@ -105,11 +115,11 @@ impl ProductRepository for SqlxProductRepository {
 
         result.map(|_| ()).map_err(map_product_write_error)
     }
-
+    /// Atualiza o registro persistido e retorna sucesso após a gravação; ausência, conflito de versão ou falha SQL são convertidos em erro da aplicação.
     async fn update(&self, product: &Product) -> Result<(), AppError> {
-        let sql = "UPDATE products SET name = ?, sku = ?, description = ?, price_cents = ?, \
-                   stock = ?, category_id = ?, status = ?, updated_at = ?, deleted_at = ? \
-                   WHERE id = ?";
+        let sql = "UPDATE products SET name = $1, sku = $2, description = $3, price_cents = $4, \
+                   stock = $5, category_id = $6, status = $7, updated_at = $8, deleted_at = $9 \
+                   WHERE id = $10";
 
         let result = sqlx::query(sql)
             .bind(product.name())
@@ -131,7 +141,7 @@ impl ProductRepository for SqlxProductRepository {
         }
         Ok(())
     }
-
+    /// Consulta uma página de registros aplicando offset e limite e retorna os itens ordenados ou erro de persistência.
     async fn list(
         &self,
         filter: &ProductFilter,
@@ -139,12 +149,17 @@ impl ProductRepository for SqlxProductRepository {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<Product>, AppError> {
-        let (condition, values) = Self::build_where(filter);
+        // Os filtros ocupam `$1..$n`; `LIMIT`/`OFFSET` continuam a numeração a
+        // partir de onde os filtros pararam.
+        let (condition, values) = Self::build_where(filter, 1);
+        let limit_index = values.len() + 1;
+        let offset_index = values.len() + 2;
 
         // `sort.order_by()` é uma constante do enum: nenhum texto do cliente
         // entra no SQL.
         let sql = format!(
-            "SELECT {COLUMNS} FROM products WHERE {condition} ORDER BY {} LIMIT ? OFFSET ?",
+            "SELECT {COLUMNS} FROM products WHERE {condition} ORDER BY {} \
+             LIMIT ${limit_index} OFFSET ${offset_index}",
             sort.order_by()
         );
 
@@ -161,9 +176,9 @@ impl ProductRepository for SqlxProductRepository {
 
         rows.into_iter().map(ProductRow::into_product).collect()
     }
-
+    /// Conta os registros considerados ativos pelo repositório e retorna o total ou erro de persistência.
     async fn count(&self, filter: &ProductFilter) -> Result<i64, AppError> {
-        let (condition, values) = Self::build_where(filter);
+        let (condition, values) = Self::build_where(filter, 1);
         let sql = format!("SELECT count(*) FROM products WHERE {condition}");
 
         let mut query = sqlx::query_scalar::<_, i64>(&sql);
@@ -268,17 +283,20 @@ fn parse_timestamp(column: &str, value: &str) -> Result<DateTime<Utc>, AppError>
 ///
 /// - SKU duplicado entre ativos vira `AlreadyInUse`.
 /// - Categoria inexistente (FK) vira `CategoryNotFound`.
+///
+/// A detecção usa `SQLSTATE` e o nome da constraint
+/// (`products_sku_active_unique`), não o texto da mensagem: o PostgreSQL
+/// traduz a mensagem conforme o locale do servidor.
 fn map_product_write_error(error: sqlx::Error) -> AppError {
-    if let sqlx::Error::Database(database_error) = &error {
-        if database_error.is_unique_violation() && database_error.message().contains("products.sku")
-        {
-            return AppError::AlreadyInUse("SKU".to_owned());
-        }
-        // A FK de categoria aparece como violação de constraint, não de unicidade.
-        if database_error.message().contains("FOREIGN KEY") {
-            return AppError::CategoryNotFound;
-        }
+    if crate::pg_errors::is_unique_violation_on(&error, "products_sku_active_unique") {
+        return AppError::AlreadyInUse("SKU".to_owned());
     }
+    // A FK de categoria é a única possível nesta tabela, então o código do
+    // `SQLSTATE` basta.
+    if crate::pg_errors::is_foreign_key_violation(&error) {
+        return AppError::CategoryNotFound;
+    }
+
     AppError::infrastructure(error)
 }
 
@@ -291,14 +309,18 @@ mod tests {
         ProductFilter::default()
     }
 
+    /// Verifica o contrato identificado por `where_always_filters_soft_deleted` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn where_always_filters_soft_deleted() {
-        let (condition, values) = SqlxProductRepository::build_where(&empty_filter());
+        let (condition, values) = SqlxProductRepository::build_where(&empty_filter(), 1);
 
         assert!(condition.contains("deleted_at IS NULL"));
         assert!(values.is_empty());
     }
 
+    /// Verifica o contrato identificado por `category_filter_adds_placeholder_and_value` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn category_filter_adds_placeholder_and_value() {
         let category = UserId::new_v4();
@@ -307,12 +329,14 @@ mod tests {
             ..Default::default()
         };
 
-        let (condition, values) = SqlxProductRepository::build_where(&filter);
+        let (condition, values) = SqlxProductRepository::build_where(&filter, 1);
 
-        assert!(condition.contains("category_id = ?"));
+        assert!(condition.contains("category_id = $1"));
         assert_eq!(values, vec![category.to_string()]);
     }
 
+    /// Verifica o contrato identificado por `name_filter_escapes_like_wildcards` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn name_filter_escapes_like_wildcards() {
         let filter = ProductFilter {
@@ -320,9 +344,9 @@ mod tests {
             ..Default::default()
         };
 
-        let (condition, values) = SqlxProductRepository::build_where(&filter);
+        let (condition, values) = SqlxProductRepository::build_where(&filter, 1);
 
-        assert!(condition.contains("LOWER(name) LIKE LOWER(?)"));
+        assert!(condition.contains("LOWER(name) LIKE LOWER($1)"));
         assert_eq!(
             values,
             vec!["%100\\%%".to_owned()],
@@ -330,6 +354,8 @@ mod tests {
         );
     }
 
+    /// Verifica o contrato identificado por `filters_combine_with_and` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn filters_combine_with_and() {
         let filter = ProductFilter {
@@ -338,13 +364,15 @@ mod tests {
             only_active: Some(true),
         };
 
-        let (condition, values) = SqlxProductRepository::build_where(&filter);
+        let (condition, values) = SqlxProductRepository::build_where(&filter, 1);
 
         assert_eq!(values.len(), 2, "dois filtros parametrizados");
         assert!(condition.contains("AND"));
         assert!(condition.contains("status = 'active'"));
     }
 
+    /// Verifica o contrato identificado por `escape_like_handles_backslash_and_underscore` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn escape_like_handles_backslash_and_underscore() {
         assert_eq!(escape_like("a_b"), "a\\_b");

@@ -1,3 +1,8 @@
+//! Entidade de usuário, timestamps e invariantes de identidade e estado.
+//!
+//! Concentra criação, restauração, alterações de perfil e exclusão lógica sem
+//! permitir que estados inválidos sejam construídos pelos adaptadores.
+
 use chrono::{DateTime, Utc};
 
 use crate::email::Email;
@@ -384,25 +389,27 @@ mod tests {
     use chrono::Duration;
 
     use super::*;
-
+    /// Retorna um instante UTC fixo para tornar as verificações determinísticas.
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-11-14T12:00:00Z")
             .expect("data válida")
             .with_timezone(&Utc)
     }
-
+    /// Cria um e-mail válido e fixo para os cenários de teste; retorna o value object correspondente.
     fn email() -> Email {
         Email::parse("user@example.com").expect("e-mail válido")
     }
-
+    /// Retorna o hash de senha válido usado como fixture nos testes.
     fn hash() -> PasswordHash {
         PasswordHash::parse("$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA").expect("hash válido")
     }
-
+    /// Monta e retorna um usuário válido de fixture com os dados informados pelo cenário.
     fn user() -> User {
         User::new("Vladimir", email(), hash(), Role::Admin, now()).expect("usuário válido")
     }
 
+    /// Verifica o contrato identificado por `new_user_is_active_and_trims_name` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn new_user_is_active_and_trims_name() {
         let user = User::new("  Vladimir  ", email(), hash(), Role::Manager, now())
@@ -418,6 +425,8 @@ mod tests {
         assert!(user.deleted_at().is_none());
     }
 
+    /// Verifica o contrato identificado por `rejects_invalid_name` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_invalid_name() {
         assert!(matches!(
@@ -426,6 +435,8 @@ mod tests {
         ));
     }
 
+    /// Verifica o contrato identificado por `rejects_name_over_limit` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_name_over_limit() {
         let long_name = "a".repeat(MAX_NAME_LEN + 1);
@@ -433,6 +444,8 @@ mod tests {
         assert!(User::new(long_name, email(), hash(), Role::User, now()).is_err());
     }
 
+    /// Verifica o contrato identificado por `rename_updates_timestamp` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rename_updates_timestamp() {
         let mut user = user();
@@ -445,6 +458,8 @@ mod tests {
         assert!(user.rename("Inválido\u{7}", later).is_err());
     }
 
+    /// Verifica o contrato identificado por `timestamp_never_moves_backwards` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn timestamp_never_moves_backwards() {
         let mut user = user();
@@ -455,6 +470,8 @@ mod tests {
         assert_eq!(user.updated_at(), now());
     }
 
+    /// Verifica o contrato identificado por `changes_role_password_and_status` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn changes_role_password_and_status() {
         let mut user = user();
@@ -473,6 +490,8 @@ mod tests {
         assert!(!user.is_active());
     }
 
+    /// Verifica o contrato identificado por `soft_delete_deactivates_and_is_idempotent` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn soft_delete_deactivates_and_is_idempotent() {
         let mut user = user();
@@ -488,6 +507,8 @@ mod tests {
         assert_eq!(user.updated_at(), later);
     }
 
+    /// Verifica o contrato identificado por `mutations_are_rejected_after_delete` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn mutations_are_rejected_after_delete() {
         let mut user = user();
@@ -501,6 +522,8 @@ mod tests {
         assert_eq!(user.activate(now()), Err(DomainError::DeletedUser));
     }
 
+    /// Verifica o contrato identificado por `restore_preserves_state` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn restore_preserves_state() {
         let original = user();
@@ -524,6 +547,8 @@ mod tests {
         assert_eq!(restored.password_hash(), original.password_hash());
     }
 
+    /// Verifica o contrato identificado por `timestamps_reject_inconsistent_order` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn timestamps_reject_inconsistent_order() {
         let later = now() + Duration::seconds(30);

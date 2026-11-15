@@ -4,21 +4,20 @@
 //! request ID, 404 sem content-type e presença condicional das rotas de
 //! desenvolvimento.
 
+mod common;
+
 use api::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use common::isolated_database;
 use http_body_util::BodyExt;
-use infrastructure::Database;
 use tower::ServiceExt;
-
+/// Monta e retorna um `AppState` de teste conectado ao banco isolado.
 async fn test_state(shutdown_on_tab_close: bool) -> AppState {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    database.migrate().await.expect("migrations");
-    AppState::new(shutdown_on_tab_close, database)
+    let database = isolated_database("teste").await;
+    AppState::for_tests(shutdown_on_tab_close, database)
 }
-
+/// Executa uma requisição GET no roteador de teste e retorna status, JSON e request ID da resposta.
 async fn get(uri: &str) -> (StatusCode, serde_json::Value, Option<String>) {
     let response = api::router(test_state(false).await)
         .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
@@ -36,6 +35,8 @@ async fn get(uri: &str) -> (StatusCode, serde_json::Value, Option<String>) {
     (status, json, request_id)
 }
 
+/// Verifica o contrato identificado por `health_reports_ok` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn health_reports_ok() {
     let (status, body, _) = get("/health").await;
@@ -44,6 +45,8 @@ async fn health_reports_ok() {
     assert_eq!(body["status"], "ok");
 }
 
+/// Verifica o contrato identificado por `ready_reports_ready_with_database_up` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn ready_reports_ready_with_database_up() {
     let (status, body, _) = get("/ready").await;
@@ -52,12 +55,12 @@ async fn ready_reports_ready_with_database_up() {
     assert_eq!(body["status"], "ready");
 }
 
+/// Verifica o contrato identificado por `ready_reports_unavailable_when_database_is_down` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn ready_reports_unavailable_when_database_is_down() {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    let state = AppState::new(false, database.clone());
+    let database = isolated_database("teste").await;
+    let state = AppState::for_tests(false, database.clone());
     database.close().await;
 
     let response = api::router(state)
@@ -89,6 +92,8 @@ async fn ready_reports_unavailable_when_database_is_down() {
     );
 }
 
+/// Verifica o contrato identificado por `propagates_request_id` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn propagates_request_id() {
     let (_, _, request_id) = get("/health").await;
@@ -96,6 +101,8 @@ async fn propagates_request_id() {
     assert!(request_id.is_some_and(|value| !value.is_empty()));
 }
 
+/// Verifica o contrato identificado por `unknown_route_returns_not_found` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn unknown_route_returns_not_found() {
     let response = api::router(test_state(false).await)
@@ -115,6 +122,8 @@ async fn unknown_route_returns_not_found() {
     );
 }
 
+/// Verifica o contrato identificado por `session_page_is_absent_when_disabled` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn session_page_is_absent_when_disabled() {
     let response = api::router(test_state(false).await)
@@ -125,6 +134,8 @@ async fn session_page_is_absent_when_disabled() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+/// Verifica o contrato identificado por `session_page_is_served_when_enabled` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn session_page_is_served_when_enabled() {
     let response = api::router(test_state(true).await)

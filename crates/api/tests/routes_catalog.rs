@@ -5,6 +5,9 @@
 //! testes falham nos dois sentidos: rota no roteador sem catálogo e rota no
 //! catálogo que o roteador não atende.
 
+mod common;
+
+use common::isolated_database;
 use std::net::SocketAddr;
 
 use api::AppState;
@@ -12,17 +15,13 @@ use api::catalog::{self, Access};
 use axum::body::Body;
 use axum::extract::connect_info::ConnectInfo;
 use axum::http::{Request, StatusCode};
-use infrastructure::Database;
 use tower::ServiceExt;
 
 /// Estado com banco em memória migrado e JWT configurado.
 async fn state(sessions_enabled: bool) -> AppState {
-    let database = Database::connect_path(":memory:")
-        .await
-        .expect("banco em memória");
-    database.migrate().await.expect("migrations");
+    let database = isolated_database("teste").await;
 
-    AppState::new(sessions_enabled, database)
+    AppState::for_tests(sessions_enabled, database)
         .with_jwt("0123456789abcdef0123456789abcdef", 900)
         .expect("JWT válido")
 }
@@ -42,6 +41,8 @@ async fn call(state: &AppState, method: &str, path: &str) -> StatusCode {
         .status()
 }
 
+/// Verifica o contrato identificado por `every_catalogued_endpoint_is_reachable_in_the_router` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn every_catalogued_endpoint_is_reachable_in_the_router() {
     let app_state = state(true).await;
@@ -59,6 +60,8 @@ async fn every_catalogued_endpoint_is_reachable_in_the_router() {
     }
 }
 
+/// Verifica o contrato identificado por `catalogue_covers_the_real_route_set` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn catalogue_covers_the_real_route_set() {
     // Lista completa dos caminhos declarados em `routes.rs` e `auth_routes.rs`.
@@ -88,6 +91,8 @@ async fn catalogue_covers_the_real_route_set() {
     }
 }
 
+/// Verifica o contrato identificado por `catalogue_has_no_endpoint_missing_from_the_code` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn catalogue_has_no_endpoint_missing_from_the_code() {
     let declared = declared_route_paths();
@@ -112,6 +117,7 @@ fn declared_route_paths() -> Vec<String> {
         include_str!("../src/auth_routes.rs"),
         include_str!("../src/user_routes.rs"),
         include_str!("../src/catalog_routes.rs"),
+        include_str!("../src/history_routes.rs"),
     ];
 
     let mut paths = Vec::new();
@@ -132,6 +138,8 @@ fn declared_route_paths() -> Vec<String> {
     paths
 }
 
+/// Verifica o contrato identificado por `dev_only_routes_are_absent_when_sessions_are_disabled` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn dev_only_routes_are_absent_when_sessions_are_disabled() {
     let app_state = state(false).await;
@@ -153,6 +161,8 @@ async fn dev_only_routes_are_absent_when_sessions_are_disabled() {
     }
 }
 
+/// Verifica o contrato identificado por `bearer_endpoints_reject_requests_without_token` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn bearer_endpoints_reject_requests_without_token() {
     let app_state = state(true).await;
@@ -174,6 +184,8 @@ async fn bearer_endpoints_reject_requests_without_token() {
     }
 }
 
+/// Verifica o contrato identificado por `the_root_page_lists_the_catalogue` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn the_root_page_lists_the_catalogue() {
     let app_state = state(true).await;

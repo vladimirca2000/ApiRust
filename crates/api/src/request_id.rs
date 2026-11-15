@@ -77,11 +77,15 @@ pub async fn publish_request_id(mut request: Request, next: Next) -> Response {
 mod tests {
     use super::*;
 
+    /// Verifica o contrato identificado por `current_request_id_is_none_outside_the_scope` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn current_request_id_is_none_outside_the_scope() {
         assert_eq!(current_request_id(), None);
     }
 
+    /// Verifica o contrato identificado por `scope_exposes_the_request_id` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[tokio::test]
     async fn scope_exposes_the_request_id() {
         let id = scope("abc-123".to_owned(), async { current_request_id() }).await;
@@ -89,6 +93,8 @@ mod tests {
         assert_eq!(id.as_deref(), Some("abc-123"));
     }
 
+    /// Verifica o contrato identificado por `scopes_do_not_leak_between_tasks` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[tokio::test]
     async fn scopes_do_not_leak_between_tasks() {
         let first = tokio::spawn(scope("primeiro".to_owned(), async {

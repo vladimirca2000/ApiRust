@@ -17,7 +17,7 @@ use common::TempDb;
 async fn seed_category(temp: &TempDb, name: &str) -> Category {
     let repository = SqlxCategoryRepository::new(temp.db.pool().clone());
     let category = Category::new(name, None, Utc::now()).expect("categoria válida");
-    repository.insert(&category).await.expect("inserir");
+    repository.insert(&category, None).await.expect("inserir");
     category
 }
 
@@ -46,14 +46,17 @@ async fn seed_product(
     product
 }
 
+/// Verifica o contrato identificado por `category_round_trips_all_fields` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn category_round_trips_all_fields() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("cat-roundtrip").await;
     let repository = SqlxCategoryRepository::new(temp.db.pool().clone());
 
     let category =
         Category::new("Eletrônicos", Some("Periféricos".to_owned()), Utc::now()).expect("válida");
-    repository.insert(&category).await.expect("inserir");
+    repository.insert(&category, None).await.expect("inserir");
 
     let found = repository
         .find_by_id(category.id())
@@ -69,44 +72,56 @@ async fn category_round_trips_all_fields() {
     );
 }
 
+/// Verifica o contrato identificado por `category_name_is_unique_among_active_records` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn category_name_is_unique_among_active_records() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("cat-unique").await;
     let repository = SqlxCategoryRepository::new(temp.db.pool().clone());
 
     let first = Category::new("Duplicada", None, Utc::now()).expect("válida");
-    repository.insert(&first).await.expect("primeira");
+    repository.insert(&first, None).await.expect("primeira");
 
     let second = Category::new("Duplicada", None, Utc::now()).expect("válida");
     let error = repository
-        .insert(&second)
+        .insert(&second, None)
         .await
         .expect_err("nome duplicado deve falhar");
 
     assert!(matches!(error, application::AppError::AlreadyInUse(_)));
 }
 
+/// Verifica o contrato identificado por `soft_deleted_category_frees_its_name` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn soft_deleted_category_frees_its_name() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("cat-frees-name").await;
     let repository = SqlxCategoryRepository::new(temp.db.pool().clone());
 
     let mut category = Category::new("Reciclável", None, Utc::now()).expect("válida");
-    repository.insert(&category).await.expect("inserir");
+    repository.insert(&category, None).await.expect("inserir");
 
     category.soft_delete(Utc::now());
-    repository.update(&category).await.expect("soft delete");
+    repository
+        .update(&category, None)
+        .await
+        .expect("soft delete");
 
     // O índice parcial libera o nome para uma nova categoria ativa.
     let duplicate = Category::new("Reciclável", None, Utc::now()).expect("válida");
     repository
-        .insert(&duplicate)
+        .insert(&duplicate, None)
         .await
         .expect("nome deve estar livre após soft delete");
 }
 
+/// Verifica o contrato identificado por `counting_products_detects_dependency` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn counting_products_detects_dependency() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("cat-count-products").await;
     let categories = SqlxCategoryRepository::new(temp.db.pool().clone());
 
@@ -131,8 +146,11 @@ async fn counting_products_detects_dependency() {
     );
 }
 
+/// Verifica o contrato identificado por `product_round_trips_money_and_stock_as_integers` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn product_round_trips_money_and_stock_as_integers() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-roundtrip").await;
     let category = seed_category(&temp, "Informática").await;
 
@@ -151,7 +169,7 @@ async fn product_round_trips_money_and_stock_as_integers() {
     assert_eq!(found.category_id(), category.id());
 
     // O banco guarda inteiro, não texto nem ponto flutuante.
-    let stored: i64 = sqlx::query_scalar("SELECT price_cents FROM products WHERE id = ?")
+    let stored: i64 = sqlx::query_scalar("SELECT price_cents FROM products WHERE id = $1")
         .bind(product.id().to_string())
         .fetch_one(temp.db.pool())
         .await
@@ -159,8 +177,11 @@ async fn product_round_trips_money_and_stock_as_integers() {
     assert_eq!(stored, 129_990);
 }
 
+/// Verifica o contrato identificado por `sku_is_unique_among_active_products` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn sku_is_unique_among_active_products() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-unique-sku").await;
     let category = seed_category(&temp, "C").await;
     let repository = SqlxProductRepository::new(temp.db.pool().clone());
@@ -186,8 +207,11 @@ async fn sku_is_unique_among_active_products() {
     assert!(matches!(error, application::AppError::AlreadyInUse(_)));
 }
 
+/// Verifica o contrato identificado por `inserting_product_with_unknown_category_reports_category_not_found` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn inserting_product_with_unknown_category_reports_category_not_found() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-fk").await;
     let repository = SqlxProductRepository::new(temp.db.pool().clone());
 
@@ -213,14 +237,17 @@ async fn inserting_product_with_unknown_category_reports_category_not_found() {
     );
 }
 
+/// Verifica o contrato identificado por `hard_delete_of_category_with_products_is_blocked_by_fk` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn hard_delete_of_category_with_products_is_blocked_by_fk() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-restrict").await;
     let category = seed_category(&temp, "Protegida").await;
     seed_product(&temp, "P", "SKU-P", 100, 1, category.id()).await;
 
     // Mesmo tentando apagar direto no SQL, o banco impede (ON DELETE RESTRICT).
-    let attempt = sqlx::query("DELETE FROM categories WHERE id = ?")
+    let attempt = sqlx::query("DELETE FROM categories WHERE id = $1")
         .bind(category.id().to_string())
         .execute(temp.db.pool())
         .await;
@@ -231,8 +258,11 @@ async fn hard_delete_of_category_with_products_is_blocked_by_fk() {
     );
 }
 
+/// Verifica o contrato identificado por `listing_filters_by_category_and_name` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn listing_filters_by_category_and_name() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-filter").await;
     let notebooks = seed_category(&temp, "Notebooks").await;
     let perifericos = seed_category(&temp, "Periféricos").await;
@@ -266,8 +296,11 @@ async fn listing_filters_by_category_and_name() {
     assert_eq!(found[0].name(), "Notebook Air");
 }
 
+/// Verifica o contrato identificado por `listing_respects_each_allowlisted_sort` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn listing_respects_each_allowlisted_sort() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-sort").await;
     let category = seed_category(&temp, "S").await;
 
@@ -296,8 +329,11 @@ async fn listing_respects_each_allowlisted_sort() {
     assert_eq!(by_name[0].name(), "Barato");
 }
 
+/// Verifica o contrato identificado por `listing_applies_offset_and_limit` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn listing_applies_offset_and_limit() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-page").await;
     let category = seed_category(&temp, "P").await;
 
@@ -324,8 +360,11 @@ async fn listing_applies_offset_and_limit() {
     assert_eq!(page[1].name(), "Produto 2");
 }
 
+/// Verifica o contrato identificado por `soft_deleted_product_disappears_from_find_and_list` e protege o comportamento coberto pelas asserções.
+/// O teste retorna `()`; uma asserção incompatível reprova o cenário.
 #[tokio::test]
 async fn soft_deleted_product_disappears_from_find_and_list() {
+    // Banco temporário isolado, usado para não compartilhar dados entre cenários de teste.
     let temp = TempDb::new("prod-soft-delete").await;
     let category = seed_category(&temp, "SD").await;
     let product = seed_product(&temp, "Some", "GONE-1", 100, 1, category.id()).await;

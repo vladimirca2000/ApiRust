@@ -8,6 +8,7 @@
 use chrono::{DateTime, Utc};
 use domain::{Email, Role, User, UserId, validate_password};
 
+use crate::audit::{AuditAction, AuditEntity, AuditEntry, AuditRepository};
 use crate::error::AppError;
 use crate::policy::{Actor, UserAction};
 use crate::ports::{PasswordHasher, UserRepository};
@@ -58,13 +59,75 @@ pub struct ManageUsers<'a> {
     users: &'a dyn UserRepository,
     /// Hasher usado ao criar usuário e ao trocar senha.
     hasher: &'a dyn PasswordHasher,
+    /// Trilha de auditoria; `None` desabilita o registro (útil em testes focados).
+    audit: Option<&'a dyn AuditRepository>,
 }
 
 impl<'a> ManageUsers<'a> {
     /// Monta o caso de uso com as dependências injetadas.
     #[must_use]
     pub fn new(users: &'a dyn UserRepository, hasher: &'a dyn PasswordHasher) -> Self {
-        Self { users, hasher }
+        Self {
+            users,
+            hasher,
+            audit: None,
+        }
+    }
+
+    /// Liga a trilha de auditoria a este caso de uso.
+    ///
+    /// O bootstrap sempre liga; os testes que exercitam apenas a política podem
+    /// omitir. Quando ligada, toda mutação bem-sucedida deixa registro.
+    #[must_use]
+    pub fn with_audit(mut self, audit: &'a dyn AuditRepository) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    /// Registra uma mutação de usuário na trilha, quando ligada.
+    ///
+    /// Devolve a entrada pronta: quem chama precisa gravá-la **na mesma
+    /// transação** da mutação, senão a alteração pode ficar sem autor.
+    ///
+    /// O snapshot nunca inclui `password_hash`: a trilha é consultável por Admin
+    /// e não deve expor material de autenticação.
+    fn audit_entry(
+        &self,
+        actor: Actor,
+        action: AuditAction,
+        before: Option<&User>,
+        after: &User,
+        at: DateTime<Utc>,
+    ) -> Option<AuditEntry> {
+        self.audit?;
+
+        let snapshot = |user: &User| {
+            serde_json::json!({
+                "id": user.id().to_string(),
+                "name": user.name(),
+                "email": user.email().as_str(),
+                "role": user.role().as_str(),
+                "status": user.status().as_str(),
+            })
+        };
+
+        let entity_id = after.id().to_string();
+        let after_json = snapshot(after);
+
+        Some(match before {
+            Some(before) => AuditEntry::updated(
+                Some(actor.id),
+                action,
+                AuditEntity::User,
+                entity_id,
+                snapshot(before),
+                after_json,
+                at,
+            ),
+            None => {
+                AuditEntry::created(Some(actor.id), AuditEntity::User, entity_id, after_json, at)
+            }
+        })
     }
 
     /// Lista usuários vivos com paginação.
@@ -79,7 +142,7 @@ impl<'a> ManageUsers<'a> {
     pub async fn list(&self, actor: Actor, offset: i64, limit: i64) -> Result<UserPage, AppError> {
         UserAction::List.authorize(actor)?;
 
-        let (offset, limit) = crate::pagination::normalize(offset, limit);
+        let (offset, limit) = crate::pagination::normalize(offset, limit)?;
 
         let items = self.users.list(offset, limit).await?;
         let total = self.users.count().await?;
@@ -114,7 +177,8 @@ impl<'a> ManageUsers<'a> {
         let hash = self.hasher.hash(&input.password).await?;
         let user = User::new(input.name, email, hash, input.role, now)?;
 
-        self.users.insert(&user).await?;
+        let audit = self.audit_entry(actor, AuditAction::Create, None, &user, now);
+        self.users.insert(&user, audit.as_ref()).await?;
         Ok(user)
     }
 
@@ -152,6 +216,7 @@ impl<'a> ManageUsers<'a> {
         UserAction::UpdateProfile { target }.authorize(actor)?;
 
         let mut user = self.load(target).await?;
+        let before = user.clone();
 
         if let Some(name) = input.name {
             user.rename(name, now)?;
@@ -167,7 +232,8 @@ impl<'a> ManageUsers<'a> {
             user.change_password(hash, now)?;
         }
 
-        self.users.update(&user).await?;
+        let audit = self.audit_entry(actor, AuditAction::Update, Some(&before), &user, now);
+        self.users.update(&user, audit.as_ref()).await?;
         Ok(user)
     }
 
@@ -189,8 +255,10 @@ impl<'a> ManageUsers<'a> {
         UserAction::ChangeRole { target }.authorize(actor)?;
 
         let mut user = self.load(target).await?;
+        let before = user.clone();
         user.change_role(role, now)?;
-        self.users.update(&user).await?;
+        let audit = self.audit_entry(actor, AuditAction::ChangeRole, Some(&before), &user, now);
+        self.users.update(&user, audit.as_ref()).await?;
         Ok(user)
     }
 
@@ -211,8 +279,10 @@ impl<'a> ManageUsers<'a> {
         UserAction::Delete { target }.authorize(actor)?;
 
         let mut user = self.load(target).await?;
+        let before = user.clone();
         user.soft_delete(now);
-        self.users.update(&user).await?;
+        let audit = self.audit_entry(actor, AuditAction::Delete, Some(&before), &user, now);
+        self.users.update(&user, audit.as_ref()).await?;
         Ok(user)
     }
 

@@ -368,6 +368,8 @@ mod tests {
         Product::new("Teclado", sku(), None, price(), 10, category_id(), now()).expect("válido")
     }
 
+    /// Verifica o contrato identificado por `new_product_is_active` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn new_product_is_active() {
         let product = product();
@@ -379,6 +381,8 @@ mod tests {
         assert!(product.is_active());
     }
 
+    /// Verifica o contrato identificado por `rejects_negative_stock` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_negative_stock() {
         let result = Product::new("Teclado", sku(), None, price(), -1, category_id(), now());
@@ -386,6 +390,8 @@ mod tests {
         assert!(matches!(result, Err(DomainError::InvalidStock(_))));
     }
 
+    /// Verifica o contrato identificado por `accepts_zero_stock` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn accepts_zero_stock() {
         let result = Product::new("Esgotado", sku(), None, price(), 0, category_id(), now());
@@ -393,6 +399,8 @@ mod tests {
         assert!(result.is_ok(), "estoque zero é válido (produto esgotado)");
     }
 
+    /// Verifica o contrato identificado por `rejects_empty_name` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn rejects_empty_name() {
         let result = Product::new("   ", sku(), None, price(), 1, category_id(), now());
@@ -400,6 +408,8 @@ mod tests {
         assert!(matches!(result, Err(DomainError::InvalidName(_))));
     }
 
+    /// Verifica o contrato identificado por `set_stock_rejects_negative` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn set_stock_rejects_negative() {
         let mut product = product();
@@ -408,6 +418,8 @@ mod tests {
         assert_eq!(product.stock(), 10, "estoque não pode ter mudado");
     }
 
+    /// Verifica o contrato identificado por `set_stock_accepts_zero` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn set_stock_accepts_zero() {
         let mut product = product();
@@ -417,6 +429,8 @@ mod tests {
         assert_eq!(product.stock(), 0);
     }
 
+    /// Verifica o contrato identificado por `change_price_updates_timestamp` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn change_price_updates_timestamp() {
         let mut product = product();
@@ -431,6 +445,8 @@ mod tests {
         assert_eq!(product.updated_at(), later);
     }
 
+    /// Verifica o contrato identificado por `change_category_moves_product` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn change_category_moves_product() {
         let mut product = product();
@@ -441,6 +457,8 @@ mod tests {
         assert_eq!(product.category_id(), other);
     }
 
+    /// Verifica o contrato identificado por `soft_delete_is_idempotent` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn soft_delete_is_idempotent() {
         let mut product = product();
@@ -453,6 +471,8 @@ mod tests {
         assert_eq!(product.deleted_at(), Some(later));
     }
 
+    /// Verifica o contrato identificado por `mutations_rejected_after_delete` e protege o comportamento coberto pelas asserções.
+    /// O teste retorna `()`; uma asserção incompatível reprova o cenário.
     #[test]
     fn mutations_rejected_after_delete() {
         let mut product = product();

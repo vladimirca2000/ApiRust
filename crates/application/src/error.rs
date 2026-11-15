@@ -1,3 +1,8 @@
+//! Erros tipados da camada de aplicação e conversão de falhas de infraestrutura.
+//!
+//! Mantém falhas de domínio, autenticação e persistência distinguíveis até a
+//! camada HTTP, que escolhe a resposta pública apropriada.
+
 use std::error::Error;
 use std::fmt;
 
@@ -17,12 +22,14 @@ impl InfrastructureError {
 }
 
 impl fmt::Display for InfrastructureError {
+    /// Escreve a mensagem segura do erro de aplicação no formatter e retorna o resultado da escrita.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.0)
     }
 }
 
 impl Error for InfrastructureError {
+    /// Expõe a causa encadeada quando o erro encapsula uma falha de infraestrutura; retorna `None` quando não há causa.
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(self.0.as_ref())
     }
@@ -77,6 +84,13 @@ pub enum AppError {
     /// A ordenação solicitada não está na allowlist.
     #[error("ordenação inválida: {0}")]
     InvalidSort(String),
+
+    /// `offset`/`limit` fora do intervalo aceito.
+    ///
+    /// Recusar é proposital: corrigir em silêncio faz um cliente com bug
+    /// interpretar uma página de um item como "fim dos dados".
+    #[error("paginação inválida: {0}")]
+    InvalidPagination(String),
 
     /// A operação violaria uma regra de negócio do catálogo.
     #[error("{0}")]
